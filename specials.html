@@ -1,8 +1,13 @@
  <html>
     <head>
           <title>Oakwood Specials Finder</title>
+          
+
           <meta name="viewport" content="width=device-width">
- -        <meta name="mobile-web-app-capable" content="yes">
+          <meta name="apple-mobile-web-app-capable" content="yes">
+          <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+          <link href="https://media.licdn.com/mpr/mpr/shrinknp_200_200/p/1/005/0a4/3eb/15a127a.jpg" rel="apple-touch-icon">
+
           <script type="text/javascript" src="special_finder.js"></script>
           <!-- Latest compiled and minified CSS -->
           <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
@@ -10,6 +15,9 @@
           <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>
           <!-- Latest compiled JavaScript -->
           <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
+          <!-- Bootstrap Date-Picker Plugin -->
+          <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.4.1/js/bootstrap-datepicker.min.js"></script>
+          <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.4.1/css/bootstrap-datepicker3.css"/>
     </head>
     <body>
         <div class="container">
@@ -21,11 +29,43 @@
         <p>Ben's special is <strong><span id="special_ben">special name</span></strong>.</p>
         <p>Meryl's special is <strong><span id="special_meryl">special name</span></strong>.</p>
         <br/>
-       
-        <form>
-          <button type="button" class="btn btn-primary" onclick="changeDate(-1);">Prev</button>
-          <button type="button" class="btn btn-primary" onclick="changeDate(1);">Next</button>
-		    </form>
+
+          <!-- Form code begins -->
+          <form>
+            <div class="form-group"> <!-- Date input -->
+              <label class="control-label" for="date2">View Specials for Another Date</label>
+              <input class="form-control" id="date2" name="date2" placeholder="MM-DD-YYY" type="text"/>
+            </div>
+            <div class="form-group"> <!-- Submit button -->
+              <button type="button" class="btn btn-primary " name="submit" onclick="updateSpecials();">Update</button>
+            </div>
+           </form>
+           <!-- Form code ends --> 
+
+           <script>
+          $(document).ready(function(){
+            var date_input=$('input[name="date2"]'); //our date input has the name "date2"
+            var container=$('.bootstrap-iso form').length>0 ? $('.bootstrap-iso form').parent() : "body";
+            var options={
+              format: 'mm-dd-yyyy',
+              daysOfWeekDisabled: "0,6",
+              container: container,
+              todayHighlight: true,
+              autoclose: true,
+            };
+            date_input.datepicker(options);
+          })
+      </script>
+
+      <script type="text/javascript">
+        function updateSpecials() {
+          var newDate = document.getElementById('date2').value;
+          console.log("The new date is: " + newDate );
+          getSpecialsForDate(newDate);
+        };
+      </script>
+
+
         </div>
 
         <!--write actual values in the fields-->
