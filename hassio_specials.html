@@ -1,0 +1,36 @@
+ <html>
+    <head>
+          <title>Oakwood Specials Finder</title>
+          
+
+          <script type="text/javascript" src="special_finder.js"></script>
+    </head>
+    <body>
+        <h3>Specials for <span id="date">date</span></h3>
+        <p>The special code for this date is "<span id="special_key">special key</span>".</p>
+        <p>Ben's special is <strong><span id="special_ben">special name</span></strong>.</p>
+        <p>Meryl's special is <strong><span id="special_meryl">special name</span></strong>.</p>
+
+      <script type="text/javascript">
+        function updateSpecials() {
+          var newDate = document.getElementById('date2').value;
+          console.log("The new date is: " + newDate );
+          getSpecialsForDate(newDate);
+        };
+      </script>
+
+
+        </div>
+
+        <!--write actual values in the fields-->
+        <script type="text/javascript">
+        document.getElementById("date").innerHTML = today ;
+        document.getElementById("special_key").innerHTML = specialDates[today] ;
+        document.getElementById("special_ben").innerHTML = benSpecials[specialDates[today]] ;
+        document.getElementById("special_meryl").innerHTML = merylSpecials[specialDates[today]] ;
+        </script>
+
+
+    </body>
+    </html>
+
