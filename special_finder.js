@@ -1,6 +1,6 @@
 // Create object that contains keys for today's date and the associated specials
 var specialDates = {
-	'03-01-2017' : 'E',
+	'02-12-2018' : 'E',
 	'03-02-2017' : 'A',
 	'03-03-2017' : 'B',
 	'03-04-2017' : 'X',
