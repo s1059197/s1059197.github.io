@@ -20,68 +20,43 @@
     image-rendering: pixelated;
     image-rendering: crisp-edges;
   }
-  #ui-overlay {
-    position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    pointer-events: none;
-  }
 </style>
 </head>
 <body>
-<canvas id="game" width="512" height="512"></canvas>
+<canvas id="game" width="640" height="400"></canvas>
 <script>
 // ============================================================
-//  BUSHRUN - An 8-bit campus bush-skipping adventure
+//  BUSHRUN - A side-scrolling bush-jumping adventure
 // ============================================================
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
-// ---------- constants ----------
-const TILE = 32;
-const COLS = canvas.width / TILE;   // 16
-const ROWS = canvas.height / TILE;  // 16
-const SCROLL_SPEED_BASE = 1.8;
-const PLAYER_SPEED = 3.5;
+const W = canvas.width;
+const H = canvas.height;
+const GROUND_Y = H - 60;
+const GRAVITY = 0.55;
+const JUMP_FORCE = -11;
+const SCROLL_SPEED_BASE = 2.5;
 
-// ---------- colors (8-bit palette) ----------
+// ---------- colors ----------
 const COL = {
-  grass1: '#4a8c3f',
-  grass2: '#5a9c4f',
-  path:   '#c8b88a',
-  pathEdge: '#b0a070',
-  bush:   '#2d6e2d',
-  bushLight: '#3a8a3a',
-  bushDark: '#1a4e1a',
+  sky1: '#70b8e8', sky2: '#a0d8f0', sky3: '#d0ecff',
+  grass1: '#4a8c3f', grass2: '#5a9c4f',
+  dirt: '#8b6e4e', dirtDark: '#6b4e2e',
+  bush: '#2d6e2d', bushLight: '#3a8a3a', bushDark: '#1a4e1a',
   bushFlower: '#e8e850',
-  player: '#3070d0',
-  playerSkin: '#f0c090',
-  playerHair: '#604020',
-  obstacle: '#d04040',
-  sky:    '#70b8e8',
-  building: '#8888a0',
-  buildingDark: '#686880',
-  roof:   '#a05050',
-  window: '#f0e870',
-  windowOff: '#606880',
-  trunk:  '#806040',
-  leaves: '#308030',
-  leavesDark: '#206820',
-  text:   '#ffffff',
-  score:  '#f0e060',
-  heart:  '#e04060',
+  player: '#3070d0', playerSkin: '#f0c090', playerHair: '#604020',
+  text: '#ffffff', score: '#f0e060',
+  heart: '#e04060', heartCrack: '#000000',
   shadow: 'rgba(0,0,0,0.18)',
+  trunk: '#806040', leaves: '#308030', leavesDark: '#206820',
+  building: '#8888a0', buildingDark: '#686880',
+  roof: '#a05050', window: '#f0e870', windowOff: '#606880',
+  cloud: 'rgba(255,255,255,0.7)',
+  path: '#c8b88a',
 };
 
-// ---------- obstacle names ----------
-const OBSTACLE_NAMES = [
-  'Phil', 'Bud', 'Mark', 'Big Mike', 'Nate Dogg',
-  'Marla', 'Hot Debbie', 'Box-out Becky', 'Cindy', 'Marla'
-];
-
-// Color/style per character so they look distinct
+// ---------- character styles ----------
 const CHAR_STYLES = {
   'Phil':           { shirt: '#d04040', hair: '#604020', skin: '#f0c090' },
   'Bud':            { shirt: '#40a040', hair: '#303030', skin: '#e0b080' },
@@ -94,334 +69,673 @@ const CHAR_STYLES = {
   'Cindy':          { shirt: '#ff69b4', hair: '#301010', skin: '#f0c090', female: true, heart: true },
 };
 
+const DECORATION_NAMES = ['Phil', 'Bud', 'Mark', 'Big Mike', 'Nate Dogg', 'Marla', 'Hot Debbie', 'Box-out Becky'];
+
 // ---------- game state ----------
 let state = 'title'; // title | playing | gameover
 let score = 0;
 let highScore = parseInt(localStorage.getItem('bushrun_hi') || '0');
-let lives = 3;
-let scrollY = 0;
+let scrollX = 0;
 let scrollSpeed = SCROLL_SPEED_BASE;
-let invincibleTimer = 0;
 let frameCount = 0;
 let difficultyLevel = 0;
-let shakeTimer = 0;
-let shakeX = 0;
-let shakeY = 0;
+let shakeTimer = 0, shakeX = 0, shakeY = 0;
 
 // player
-const player = { x: 256, y: 400, w: 22, h: 28, inBush: false, hidden: false, bushTimer: 0 };
+const player = {
+  x: 120, y: GROUND_Y - 28,
+  w: 22, h: 28,
+  vy: 0,
+  onGround: true,
+  onBush: null,
+  jumping: false,
+  alive: true,
+  landedBushes: 0, // consecutive bush landings
+};
 
-// world rows (generated procedurally)
-let worldRows = [];
 let bushes = [];
-let obstacles = [];
+let decorPeople = [];
+let clouds = [];
+let bgTrees = [];
+let bgBuildings = [];
 let particles = [];
-let decorations = []; // background campus decorations
+
+// track next spawn x
+let nextBushX = 250;
+let nextDecoX = 400;
+let nextCloudX = 0;
+let nextTreeX = 0;
+let nextBuildingX = 0;
 
 // ---------- input ----------
 const keys = {};
 window.addEventListener('keydown', e => {
   keys[e.key] = true;
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+  if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
   if (state === 'title' && (e.key === ' ' || e.key === 'Enter')) startGame();
   if (state === 'gameover' && (e.key === ' ' || e.key === 'Enter')) startGame();
+  // jump
+  if (state === 'playing' && (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w') && player.onGround) {
+    player.vy = JUMP_FORCE;
+    player.onGround = false;
+    player.jumping = true;
+    player.onBush = null;
+    spawnParticles(player.x + 11, player.y + player.h, '#8b6e4e', 5);
+  }
 });
 window.addEventListener('keyup', e => { keys[e.key] = false; });
 
-// touch/mobile support
-let touchStartX = null, touchStartY = null;
+// touch support
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   if (state === 'title' || state === 'gameover') { startGame(); return; }
-  const t = e.touches[0];
-  touchStartX = t.clientX;
-  touchStartY = t.clientY;
-});
-canvas.addEventListener('touchmove', e => {
-  e.preventDefault();
-  if (!touchStartX) return;
-  const t = e.touches[0];
-  const dx = t.clientX - touchStartX;
-  const dy = t.clientY - touchStartY;
-  keys['ArrowLeft'] = dx < -15;
-  keys['ArrowRight'] = dx > 15;
-  keys['ArrowUp'] = dy < -15;
-  keys['ArrowDown'] = dy > 15;
-});
-canvas.addEventListener('touchend', e => {
-  e.preventDefault();
-  touchStartX = null;
-  keys['ArrowLeft'] = false;
-  keys['ArrowRight'] = false;
-  keys['ArrowUp'] = false;
-  keys['ArrowDown'] = false;
-});
-
-// ---------- procedural generation ----------
-function generateRow(worldY) {
-  // path runs roughly down the middle with some wander
-  const pathCenter = 8 + Math.sin(worldY * 0.03) * 3;
-  const pathWidth = 3;
-  const row = [];
-  for (let x = 0; x < COLS; x++) {
-    const dist = Math.abs(x - pathCenter);
-    if (dist < pathWidth) row.push('path');
-    else if (dist < pathWidth + 0.5) row.push('pathEdge');
-    else row.push('grass');
+  if (state === 'playing' && player.onGround) {
+    player.vy = JUMP_FORCE;
+    player.onGround = false;
+    player.jumping = true;
+    player.onBush = null;
+    spawnParticles(player.x + 11, player.y + player.h, '#8b6e4e', 5);
   }
-  return row;
-}
+});
 
-function spawnBush(worldY) {
-  const pathCenter = 8 + Math.sin(worldY * 0.03) * 3;
-  // place bushes along the sides of the path
-  const side = Math.random() < 0.5 ? -1 : 1;
-  const offset = 3.5 + Math.random() * 4;
-  const bx = (pathCenter + side * offset) * TILE;
-  if (bx < TILE || bx > canvas.width - 2 * TILE) return null;
+// ---------- generation ----------
+function spawnBush(x) {
+  const bushW = 50 + Math.random() * 30;
+  const bushH = 30 + Math.random() * 15;
+  // vary heights - some bushes are elevated like platforms
+  const elevation = Math.random() < 0.4 ? (30 + Math.random() * 50) : 0;
+  const y = GROUND_Y - elevation;
   return {
-    x: bx, y: worldY * TILE,
-    w: 36 + Math.random() * 16,
-    h: 30 + Math.random() * 12,
+    x, y, w: bushW, h: bushH,
     hasFlower: Math.random() < 0.3,
+    elevation,
   };
 }
 
-function spawnObstacle(worldY) {
-  const pathCenter = 8 + Math.sin(worldY * 0.03) * 3;
-  const name = OBSTACLE_NAMES[Math.floor(Math.random() * OBSTACLE_NAMES.length)];
-  const style = CHAR_STYLES[name] || CHAR_STYLES['Phil'];
-  // obstacles walk on or near the path
-  const ox = (pathCenter + (Math.random() - 0.5) * 6) * TILE;
-  const speed = (Math.random() - 0.5) * 1.5;
+function spawnDecoPerson(x) {
+  const name = DECORATION_NAMES[Math.floor(Math.random() * DECORATION_NAMES.length)];
+  const style = CHAR_STYLES[name];
+  const big = style.big;
   return {
-    x: ox, y: worldY * TILE,
-    w: style.big ? 30 : 22,
-    h: style.big ? 36 : 28,
+    x, y: GROUND_Y - (big ? 36 : 28),
+    w: big ? 30 : 22,
+    h: big ? 36 : 28,
     name, style,
-    vx: speed,
-    dir: speed > 0 ? 1 : -1,
     walkFrame: Math.random() * Math.PI * 2,
+    dir: Math.random() < 0.5 ? 1 : -1,
   };
 }
 
-function spawnDecoration(worldY) {
-  const side = Math.random() < 0.5 ? 0 : 1;
-  const x = side === 0 ? Math.random() * 80 : canvas.width - 80 + Math.random() * 60;
-  const type = Math.random() < 0.4 ? 'tree' : (Math.random() < 0.5 ? 'building' : 'lamppost');
-  return { x, y: worldY * TILE, type };
+function spawnCindy(x) {
+  const style = CHAR_STYLES['Cindy'];
+  return {
+    x, y: GROUND_Y - 28,
+    w: 22, h: 28,
+    name: 'Cindy', style,
+    walkFrame: Math.random() * Math.PI * 2,
+    dir: -1,
+    isCindy: true,
+  };
 }
 
 function initWorld() {
-  worldRows = [];
   bushes = [];
-  obstacles = [];
+  decorPeople = [];
+  clouds = [];
+  bgTrees = [];
+  bgBuildings = [];
   particles = [];
-  decorations = [];
-  for (let r = 0; r < 40; r++) {
-    worldRows.push(generateRow(r));
-    if (r > 5 && Math.random() < 0.5) {
-      const b = spawnBush(r);
-      if (b) bushes.push(b);
-    }
-    if (r > 8 && Math.random() < 0.3) {
-      obstacles.push(spawnObstacle(r));
-    }
-    if (r % 4 === 0) {
-      decorations.push(spawnDecoration(r));
-    }
+
+  // starting platform bush
+  bushes.push({ x: 80, y: GROUND_Y, w: 70, h: 35, hasFlower: false, elevation: 0 });
+
+  // initial bushes
+  nextBushX = 250;
+  for (let i = 0; i < 10; i++) {
+    const b = spawnBush(nextBushX);
+    bushes.push(b);
+    nextBushX += 100 + Math.random() * 120;
+  }
+
+  // initial deco people
+  nextDecoX = 400;
+  for (let i = 0; i < 5; i++) {
+    decorPeople.push(spawnDecoPerson(nextDecoX));
+    nextDecoX += 200 + Math.random() * 300;
+  }
+
+  // place a Cindy early on
+  decorPeople.push(spawnCindy(700 + Math.random() * 200));
+
+  // clouds
+  nextCloudX = 0;
+  for (let i = 0; i < 8; i++) {
+    clouds.push({
+      x: nextCloudX, y: 20 + Math.random() * 80,
+      w: 50 + Math.random() * 60, h: 20 + Math.random() * 15,
+      speed: 0.2 + Math.random() * 0.3,
+    });
+    nextCloudX += 80 + Math.random() * 100;
+  }
+
+  // bg trees
+  nextTreeX = 50;
+  for (let i = 0; i < 10; i++) {
+    bgTrees.push({ x: nextTreeX, scale: 0.5 + Math.random() * 0.5 });
+    nextTreeX += 100 + Math.random() * 150;
+  }
+
+  // bg buildings
+  nextBuildingX = 200;
+  for (let i = 0; i < 5; i++) {
+    bgBuildings.push({
+      x: nextBuildingX,
+      bw: 40 + Math.random() * 30,
+      bh: 50 + Math.random() * 40,
+    });
+    nextBuildingX += 200 + Math.random() * 200;
   }
 }
 
-let nextRowY = 40;
+let nextCindyScore = 1500; // next score threshold for Cindy appearance
 
 function extendWorld() {
-  const threshold = scrollY / TILE + ROWS + 10;
-  while (nextRowY < threshold) {
-    worldRows.push(generateRow(nextRowY));
-    if (Math.random() < 0.45) {
-      const b = spawnBush(nextRowY);
-      if (b) bushes.push(b);
-    }
-    // difficulty increases over time
-    const obChance = Math.min(0.45, 0.25 + difficultyLevel * 0.02);
-    if (Math.random() < obChance) {
-      obstacles.push(spawnObstacle(nextRowY));
-    }
-    if (nextRowY % 4 === 0) {
-      decorations.push(spawnDecoration(nextRowY));
-    }
-    nextRowY++;
+  const edgeX = scrollX + W + 200;
+
+  // bushes
+  while (nextBushX < edgeX) {
+    const gap = 80 + Math.random() * (100 + difficultyLevel * 10);
+    nextBushX += gap;
+    bushes.push(spawnBush(nextBushX));
   }
-  // cleanup old objects
-  const cutoff = scrollY - 200;
-  bushes = bushes.filter(b => b.y > cutoff);
-  obstacles = obstacles.filter(o => o.y > cutoff);
-  decorations = decorations.filter(d => d.y > cutoff);
+
+  // deco people
+  while (nextDecoX < edgeX) {
+    nextDecoX += 250 + Math.random() * 350;
+    decorPeople.push(spawnDecoPerson(nextDecoX));
+  }
+
+  // Cindy appears periodically
+  if (score > nextCindyScore) {
+    decorPeople.push(spawnCindy(scrollX + W + 100 + Math.random() * 200));
+    nextCindyScore += 1500 + Math.random() * 1000;
+  }
+
+  // clouds
+  while (nextCloudX < edgeX) {
+    nextCloudX += 80 + Math.random() * 120;
+    clouds.push({
+      x: nextCloudX, y: 15 + Math.random() * 80,
+      w: 50 + Math.random() * 60, h: 20 + Math.random() * 15,
+      speed: 0.2 + Math.random() * 0.3,
+    });
+  }
+
+  // bg trees
+  while (nextTreeX < edgeX) {
+    nextTreeX += 100 + Math.random() * 150;
+    bgTrees.push({ x: nextTreeX, scale: 0.5 + Math.random() * 0.5 });
+  }
+
+  // bg buildings
+  while (nextBuildingX < edgeX) {
+    nextBuildingX += 200 + Math.random() * 250;
+    bgBuildings.push({
+      x: nextBuildingX,
+      bw: 40 + Math.random() * 30,
+      bh: 50 + Math.random() * 40,
+    });
+  }
+
+  // cleanup
+  const cutoff = scrollX - 300;
+  bushes = bushes.filter(b => b.x + b.w > cutoff);
+  decorPeople = decorPeople.filter(d => d.x > cutoff);
+  clouds = clouds.filter(c => c.x + c.w > cutoff - 200);
+  bgTrees = bgTrees.filter(t => t.x > cutoff - 100);
+  bgBuildings = bgBuildings.filter(b => b.x + b.bw > cutoff - 100);
 }
 
-// ---------- drawing helpers ----------
-function drawPixelRect(x, y, w, h, color) {
-  ctx.fillStyle = color;
-  ctx.fillRect(Math.round(x), Math.round(y), w, h);
+// ---------- particles ----------
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 4,
+      vy: -Math.random() * 4 - 1,
+      life: 20 + Math.random() * 20,
+      color, size: 2 + Math.random() * 3,
+    });
+  }
 }
 
-function drawText(text, x, y, size, color, align) {
-  ctx.fillStyle = color || COL.text;
-  ctx.font = `bold ${size}px monospace`;
-  ctx.textAlign = align || 'center';
-  ctx.fillText(text, x, y);
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.15;
+    p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
 }
 
-function drawTextOutline(text, x, y, size, color, outlineColor) {
-  ctx.font = `bold ${size}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = outlineColor || '#000';
-  for (let dx = -2; dx <= 2; dx++) {
-    for (let dy = -2; dy <= 2; dy++) {
-      if (dx || dy) ctx.fillText(text, x + dx, y + dy);
+// ---------- collision ----------
+function rectOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+// ---------- game logic ----------
+function startGame() {
+  state = 'playing';
+  score = 0;
+  scrollX = 0;
+  scrollSpeed = SCROLL_SPEED_BASE;
+  difficultyLevel = 0;
+  shakeTimer = 0;
+  frameCount = 0;
+  player.x = 120;
+  player.y = GROUND_Y - player.h;
+  player.vy = 0;
+  player.onGround = true;
+  player.onBush = null;
+  player.jumping = false;
+  player.alive = true;
+  player.landedBushes = 0;
+  nextBushX = 250;
+  nextDecoX = 400;
+  nextCloudX = 0;
+  nextTreeX = 0;
+  nextBuildingX = 200;
+  nextCindyScore = 1500;
+  initWorld();
+}
+
+function update() {
+  if (state !== 'playing') return;
+  frameCount++;
+
+  // difficulty
+  difficultyLevel = Math.floor(score / 500);
+  scrollSpeed = SCROLL_SPEED_BASE + difficultyLevel * 0.2;
+  scrollX += scrollSpeed;
+  score += 1;
+
+  // player horizontal: stays at fixed screen X, world scrolls
+  // but allow small horizontal adjustments
+  const screenPX = player.x - scrollX;
+  if (keys['ArrowRight'] || keys['d']) {
+    player.x += 2;
+  }
+  if (keys['ArrowLeft'] || keys['a']) {
+    player.x -= 2;
+  }
+  // keep player roughly centered-left on screen
+  player.x = Math.max(scrollX + 40, Math.min(scrollX + W * 0.6, player.x));
+  // player also moves with scroll
+  player.x += scrollSpeed;
+
+  // gravity
+  player.vy += GRAVITY;
+  player.y += player.vy;
+
+  // landing on bushes
+  player.onGround = false;
+  player.onBush = null;
+  for (const b of bushes) {
+    const bushTop = b.y - b.h;
+    const bushLeft = b.x;
+    const bushRight = b.x + b.w;
+    const playerBottom = player.y + player.h;
+    const playerCX = player.x + player.w / 2;
+
+    // check if player lands on top of bush
+    if (player.vy >= 0 &&
+        playerCX > bushLeft && playerCX < bushRight &&
+        playerBottom >= bushTop && playerBottom <= bushTop + 15) {
+      player.y = bushTop - player.h;
+      player.vy = 0;
+      player.onGround = true;
+      player.onBush = b;
+      if (player.jumping) {
+        player.jumping = false;
+        player.landedBushes++;
+        score += 50 * player.landedBushes; // combo bonus
+        spawnParticles(player.x + 11, player.y + player.h, COL.bushLight, 6);
+      }
+      break;
     }
   }
-  ctx.fillStyle = color || COL.text;
-  ctx.fillText(text, x, y);
+
+  // ground collision
+  if (player.y + player.h >= GROUND_Y) {
+    player.y = GROUND_Y - player.h;
+    player.vy = 0;
+    player.onGround = true;
+    // landing on ground resets bush combo
+    if (player.landedBushes > 0) {
+      player.landedBushes = 0;
+    }
+  }
+
+  // if player falls off screen bottom (shouldn't happen with ground, but safety)
+  if (player.y > H + 50) {
+    state = 'gameover';
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('bushrun_hi', highScore.toString());
+    }
+  }
+
+  // if player scrolls off the left side, game over
+  if (player.x < scrollX - 30) {
+    state = 'gameover';
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('bushrun_hi', highScore.toString());
+    }
+  }
+
+  // screen shake
+  if (shakeTimer > 0) {
+    shakeTimer--;
+    shakeX = (Math.random() - 0.5) * 4;
+    shakeY = (Math.random() - 0.5) * 4;
+  } else {
+    shakeX = 0; shakeY = 0;
+  }
+
+  // update deco people (just walking animation)
+  for (const d of decorPeople) {
+    d.walkFrame += 0.08;
+  }
+
+  extendWorld();
+  updateParticles();
 }
 
-// ---------- sprite drawing ----------
-function drawBush(b, camY) {
-  const sx = b.x, sy = b.y - camY;
-  if (sy < -60 || sy > canvas.height + 20) return;
+// ---------- drawing ----------
+function drawSky() {
+  // gradient sky
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, COL.sky1);
+  grad.addColorStop(0.5, COL.sky2);
+  grad.addColorStop(1, COL.sky3);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawClouds(camX) {
+  ctx.fillStyle = COL.cloud;
+  for (const c of clouds) {
+    const sx = c.x - camX * 0.3 + Math.sin(frameCount * 0.005 + c.x) * 5;
+    const sy = c.y;
+    if (sx > W + 100 || sx + c.w < -100) continue;
+    ctx.beginPath();
+    ctx.ellipse(sx + c.w / 2, sy + c.h / 2, c.w / 2, c.h / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(sx + c.w * 0.3, sy + c.h * 0.4, c.w * 0.3, c.h * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(sx + c.w * 0.7, sy + c.h * 0.5, c.w * 0.25, c.h * 0.35, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawBgBuildings(camX) {
+  for (const b of bgBuildings) {
+    const sx = b.x - camX * 0.4;
+    if (sx > W + 100 || sx + b.bw < -100) continue;
+    const by = GROUND_Y - b.bh;
+    ctx.fillStyle = COL.buildingDark;
+    ctx.fillRect(sx, by, b.bw, b.bh);
+    ctx.fillStyle = COL.building;
+    ctx.fillRect(sx + 2, by + 2, b.bw - 4, b.bh - 2);
+    ctx.fillStyle = COL.roof;
+    ctx.fillRect(sx - 3, by - 4, b.bw + 6, 6);
+    // windows
+    for (let wy = 0; wy < 3; wy++) {
+      for (let wx = 0; wx < 2; wx++) {
+        const lit = Math.sin(b.x + wx * 3 + wy * 7 + frameCount * 0.01) > 0;
+        ctx.fillStyle = lit ? COL.window : COL.windowOff;
+        ctx.fillRect(sx + 6 + wx * (b.bw / 2 - 4), by + 8 + wy * 14, 8, 8);
+      }
+    }
+  }
+}
+
+function drawBgTrees(camX) {
+  for (const t of bgTrees) {
+    const sx = t.x - camX * 0.5;
+    if (sx > W + 60 || sx < -60) continue;
+    const s = t.scale;
+    const ty = GROUND_Y;
+    // trunk
+    ctx.fillStyle = COL.trunk;
+    ctx.fillRect(sx + 6 * s, ty - 30 * s, 8 * s, 30 * s);
+    // leaves
+    ctx.fillStyle = COL.leavesDark;
+    ctx.beginPath();
+    ctx.ellipse(sx + 10 * s, ty - 35 * s, 18 * s, 18 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = COL.leaves;
+    ctx.beginPath();
+    ctx.ellipse(sx + 8 * s, ty - 40 * s, 14 * s, 14 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawGround(camX) {
+  // grass strip
+  ctx.fillStyle = COL.grass1;
+  ctx.fillRect(0, GROUND_Y, W, 8);
+  ctx.fillStyle = COL.grass2;
+  for (let gx = 0; gx < W; gx += 16) {
+    const offset = (gx + Math.floor(camX)) % 32;
+    if (offset < 16) {
+      ctx.fillRect(gx, GROUND_Y, 8, 4);
+    }
+  }
+  // dirt
+  ctx.fillStyle = COL.dirt;
+  ctx.fillRect(0, GROUND_Y + 8, W, 20);
+  ctx.fillStyle = COL.dirtDark;
+  ctx.fillRect(0, GROUND_Y + 28, W, H - GROUND_Y - 28);
+
+  // path on ground
+  ctx.fillStyle = COL.path;
+  ctx.fillRect(0, GROUND_Y + 2, W, 6);
+}
+
+function drawBush(b, camX) {
+  const sx = b.x - camX;
+  const sy = b.y - b.h;
+  if (sx > W + 60 || sx + b.w < -60) return;
+
   // shadow
   ctx.fillStyle = COL.shadow;
   ctx.beginPath();
-  ctx.ellipse(sx + b.w / 2, sy + b.h - 2, b.w / 2 + 4, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(sx + b.w / 2, b.y + 2, b.w / 2 + 4, 5, 0, 0, Math.PI * 2);
   ctx.fill();
-  // main bush body
+
+  // main body
   ctx.fillStyle = COL.bush;
   ctx.beginPath();
   ctx.ellipse(sx + b.w / 2, sy + b.h / 2, b.w / 2, b.h / 2, 0, 0, Math.PI * 2);
   ctx.fill();
+
   // highlight
   ctx.fillStyle = COL.bushLight;
   ctx.beginPath();
-  ctx.ellipse(sx + b.w / 2 - 4, sy + b.h / 2 - 5, b.w / 3, b.h / 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(sx + b.w / 2 - 5, sy + b.h / 2 - 5, b.w / 3, b.h / 3, 0, 0, Math.PI * 2);
   ctx.fill();
-  // dark underside
+
+  // dark part
   ctx.fillStyle = COL.bushDark;
   ctx.beginPath();
-  ctx.ellipse(sx + b.w / 2 + 3, sy + b.h / 2 + 6, b.w / 3, b.h / 4, 0, 0, Math.PI * 2);
+  ctx.ellipse(sx + b.w / 2 + 4, sy + b.h / 2 + 6, b.w / 3, b.h / 4, 0, 0, Math.PI * 2);
   ctx.fill();
+
   // flower
   if (b.hasFlower) {
     ctx.fillStyle = COL.bushFlower;
-    ctx.fillRect(sx + b.w / 2 + 2, sy + b.h / 2 - 8, 5, 5);
-    ctx.fillRect(sx + b.w / 2 - 6, sy + b.h / 2 + 2, 4, 4);
+    ctx.fillRect(sx + b.w / 2 + 3, sy + b.h / 2 - 8, 5, 5);
+    ctx.fillRect(sx + b.w / 2 - 8, sy + b.h / 2 + 2, 4, 4);
   }
 }
 
-function drawCharacter(x, y, w, h, style, walkFrame, dir, name) {
+function drawCharacter(sx, sy, w, h, style, walkFrame, dir) {
   const big = style.big;
   const bw = big ? 30 : 22;
   const bh = big ? 36 : 28;
-  const cx = x, cy = y;
-
-  // walking animation
   const legOffset = Math.sin(walkFrame) * 3;
 
   // shadow
   ctx.fillStyle = COL.shadow;
   ctx.beginPath();
-  ctx.ellipse(cx + bw / 2, cy + bh, bw / 2 + 2, 4, 0, 0, Math.PI * 2);
+  ctx.ellipse(sx + bw / 2, sy + bh, bw / 2 + 2, 4, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // legs
   ctx.fillStyle = '#404060';
-  ctx.fillRect(cx + 4, cy + bh - 10 + legOffset, 5, 10);
-  ctx.fillRect(cx + bw - 9, cy + bh - 10 - legOffset, 5, 10);
+  ctx.fillRect(sx + 4, sy + bh - 10 + legOffset, 5, 10);
+  ctx.fillRect(sx + bw - 9, sy + bh - 10 - legOffset, 5, 10);
 
-  // body/shirt
+  // body
   ctx.fillStyle = style.shirt;
-  ctx.fillRect(cx + 2, cy + 8, bw - 4, bh - 16);
+  ctx.fillRect(sx + 2, sy + 8, bw - 4, bh - 16);
 
   // head
   ctx.fillStyle = style.skin;
   const headW = big ? 14 : 12;
   const headH = big ? 12 : 10;
-  ctx.fillRect(cx + (bw - headW) / 2, cy, headW, headH);
+  ctx.fillRect(sx + (bw - headW) / 2, sy, headW, headH);
 
   // hair
   ctx.fillStyle = style.hair;
   if (style.female) {
-    ctx.fillRect(cx + (bw - headW) / 2 - 1, cy - 2, headW + 2, 5);
-    ctx.fillRect(cx + (bw - headW) / 2 - 2, cy, 3, headH);
-    ctx.fillRect(cx + (bw + headW) / 2 - 1, cy, 3, headH);
+    ctx.fillRect(sx + (bw - headW) / 2 - 1, sy - 2, headW + 2, 5);
+    ctx.fillRect(sx + (bw - headW) / 2 - 2, sy, 3, headH);
+    ctx.fillRect(sx + (bw + headW) / 2 - 1, sy, 3, headH);
   } else {
-    ctx.fillRect(cx + (bw - headW) / 2, cy - 2, headW, 4);
+    ctx.fillRect(sx + (bw - headW) / 2, sy - 2, headW, 4);
   }
 
   // eyes
   ctx.fillStyle = style.shades ? '#101010' : '#202020';
-  const eyeY = cy + 4;
+  const eyeY = sy + 4;
   const eyeSize = style.shades ? 4 : 2;
-  ctx.fillRect(cx + bw / 2 - 4, eyeY, eyeSize, style.shades ? 3 : 2);
-  ctx.fillRect(cx + bw / 2 + 2, eyeY, eyeSize, style.shades ? 3 : 2);
+  ctx.fillRect(sx + bw / 2 - 4, eyeY, eyeSize, style.shades ? 3 : 2);
+  ctx.fillRect(sx + bw / 2 + 2, eyeY, eyeSize, style.shades ? 3 : 2);
   if (style.shades) {
-    ctx.fillRect(cx + bw / 2 - 5, eyeY, 12, 2);
+    ctx.fillRect(sx + bw / 2 - 5, eyeY, 12, 2);
   }
 
   // arms
   ctx.fillStyle = style.skin;
-  ctx.fillRect(cx - 2, cy + 10 - legOffset, 4, 10);
-  ctx.fillRect(cx + bw - 2, cy + 10 + legOffset, 4, 10);
+  ctx.fillRect(sx - 2, sy + 10 - legOffset, 4, 10);
+  ctx.fillRect(sx + bw - 2, sy + 10 + legOffset, 4, 10);
+}
 
-  // Cindy's floating broken heart
-  if (style.heart) {
-    const hx = cx + bw / 2;
-    const hy = cy - 12 + Math.sin(frameCount * 0.08) * 3;
-    ctx.fillStyle = COL.heart;
-    ctx.fillRect(hx - 5, hy, 4, 4);
-    ctx.fillRect(hx + 1, hy, 4, 4);
-    ctx.fillRect(hx - 6, hy + 2, 5, 3);
-    ctx.fillRect(hx + 1, hy + 2, 5, 3);
-    ctx.fillRect(hx - 4, hy + 5, 3, 2);
-    ctx.fillRect(hx + 1, hy + 5, 3, 2);
-    // crack
-    ctx.fillStyle = '#000';
-    ctx.fillRect(hx - 1, hy, 2, 8);
+function drawBrokenHeart(cx, cy, scale) {
+  const s = scale || 1;
+  // left half
+  ctx.fillStyle = COL.heart;
+  ctx.fillRect(cx - 7 * s, cy, 5 * s, 5 * s);
+  ctx.fillRect(cx - 8 * s, cy + 2 * s, 6 * s, 4 * s);
+  ctx.fillRect(cx - 6 * s, cy + 6 * s, 4 * s, 3 * s);
+  ctx.fillRect(cx - 4 * s, cy + 9 * s, 2 * s, 2 * s);
+  // right half
+  ctx.fillRect(cx + 2 * s, cy, 5 * s, 5 * s);
+  ctx.fillRect(cx + 2 * s, cy + 2 * s, 6 * s, 4 * s);
+  ctx.fillRect(cx + 2 * s, cy + 6 * s, 4 * s, 3 * s);
+  ctx.fillRect(cx + 2 * s, cy + 9 * s, 2 * s, 2 * s);
+  // crack down the middle
+  ctx.fillStyle = COL.heartCrack;
+  ctx.fillRect(cx - 1 * s, cy - 1 * s, 2 * s, 13 * s);
+  // jagged crack detail
+  ctx.fillRect(cx - 2 * s, cy + 3 * s, 2 * s, 2 * s);
+  ctx.fillRect(cx + 1 * s, cy + 6 * s, 2 * s, 2 * s);
+}
+
+function drawCindyLabel(sx, sy, bw) {
+  const labelX = sx + bw / 2;
+  const labelY = sy - 30;
+  const bobY = Math.sin(frameCount * 0.06) * 3;
+
+  // broken heart above label
+  drawBrokenHeart(labelX, labelY - 18 + bobY, 1.2);
+
+  // "CINDY" label with background
+  const textW = 50;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(labelX - textW / 2 - 2, labelY + bobY - 2, textW + 4, 16);
+  ctx.strokeStyle = '#ff69b4';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(labelX - textW / 2 - 2, labelY + bobY - 2, textW + 4, 16);
+
+  ctx.fillStyle = '#ff69b4';
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('CINDY', labelX, labelY + bobY + 10);
+
+  // broken heart label
+  ctx.fillStyle = '#ff6688';
+  ctx.font = 'bold 8px monospace';
+  ctx.fillText('\u2764\u200D\u{1FA79}', labelX, labelY + bobY + 22);
+}
+
+function drawDecoCharacter(d, camX) {
+  const sx = d.x - camX;
+  if (sx > W + 60 || sx < -60) return;
+  const sy = d.y;
+
+  drawCharacter(sx, sy, d.w, d.h, d.style, d.walkFrame, d.dir);
+
+  if (d.isCindy) {
+    // big visible label for Cindy
+    drawCindyLabel(sx, sy, d.w);
+  } else {
+    // small name tag for others
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(d.name, sx + d.w / 2, sy - 4);
+    ctx.fillStyle = '#ddd';
+    ctx.fillText(d.name, sx + d.w / 2 - 1, sy - 5);
   }
 }
 
-function drawPlayer(camY) {
-  const px = player.x, py = player.y - camY;
-  if (player.hidden) {
-    // show little eyes poking out of bush
-    if (frameCount % 30 < 20) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(px + 8, py + 6, 3, 2);
-      ctx.fillRect(px + 14, py + 6, 3, 2);
-      ctx.fillStyle = '#000';
-      ctx.fillRect(px + 9, py + 7, 2, 1);
-      ctx.fillRect(px + 15, py + 7, 2, 1);
-    }
-    return;
-  }
+function drawPlayer(camX) {
+  const px = player.x - camX;
+  const py = player.y;
 
-  // invincibility flash
-  if (invincibleTimer > 0 && Math.floor(frameCount / 3) % 2 === 0) return;
+  if (px > W + 30 || px < -30) return;
 
-  const walkF = (keys['ArrowLeft'] || keys['ArrowRight'] || keys['ArrowUp'] || keys['ArrowDown'])
-    ? frameCount * 0.3 : 0;
+  const walking = player.onGround && (keys['ArrowLeft'] || keys['ArrowRight'] || keys['a'] || keys['d']);
+  const walkF = walking ? frameCount * 0.3 : 0;
   const legOff = Math.sin(walkF) * 3;
 
   // shadow
   ctx.fillStyle = COL.shadow;
   ctx.beginPath();
-  ctx.ellipse(px + 11, py + 28, 13, 4, 0, 0, Math.PI * 2);
+  ctx.ellipse(px + 11, GROUND_Y + 2, 13, 4, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // jumping squash/stretch
+  const scaleY = player.vy < -5 ? 0.85 : (player.vy > 5 ? 1.15 : 1);
+
+  ctx.save();
+  ctx.translate(px + 11, py + player.h);
+  ctx.scale(1, scaleY);
+  ctx.translate(-(px + 11), -(py + player.h));
 
   // legs
   ctx.fillStyle = '#305090';
-  ctx.fillRect(px + 4, py + 20 + legOff, 5, 10);
-  ctx.fillRect(px + 13, py + 20 - legOff, 5, 10);
+  const lOff = player.onGround ? legOff : 3;
+  ctx.fillRect(px + 4, py + 20 + lOff, 5, 10);
+  ctx.fillRect(px + 13, py + 20 - lOff, 5, 10);
 
   // body
   ctx.fillStyle = COL.player;
@@ -449,361 +763,172 @@ function drawPlayer(camY) {
 
   // arms
   ctx.fillStyle = COL.playerSkin;
-  ctx.fillRect(px - 2, py + 10 + legOff * 0.5, 4, 8);
-  ctx.fillRect(px + 20, py + 10 - legOff * 0.5, 4, 8);
+  ctx.fillRect(px - 2, py + 10 + lOff * 0.5, 4, 8);
+  ctx.fillRect(px + 20, py + 10 - lOff * 0.5, 4, 8);
+
+  ctx.restore();
 }
 
-function drawTree(x, y) {
-  ctx.fillStyle = COL.trunk;
-  ctx.fillRect(x + 8, y + 20, 8, 20);
-  ctx.fillStyle = COL.leavesDark;
-  ctx.beginPath();
-  ctx.ellipse(x + 12, y + 12, 18, 18, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = COL.leaves;
-  ctx.beginPath();
-  ctx.ellipse(x + 10, y + 8, 14, 14, 0, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawBuilding(x, y) {
-  const bw = 50, bh = 60;
-  ctx.fillStyle = COL.buildingDark;
-  ctx.fillRect(x, y, bw, bh);
-  ctx.fillStyle = COL.building;
-  ctx.fillRect(x + 2, y + 2, bw - 4, bh - 2);
-  // roof
-  ctx.fillStyle = COL.roof;
-  ctx.fillRect(x - 3, y - 4, bw + 6, 8);
-  // windows
-  for (let wy = 0; wy < 3; wy++) {
-    for (let wx = 0; wx < 2; wx++) {
-      const lit = Math.sin((x + wx) * 3 + wy * 7 + frameCount * 0.01) > 0;
-      ctx.fillStyle = lit ? COL.window : COL.windowOff;
-      ctx.fillRect(x + 8 + wx * 20, y + 10 + wy * 16, 10, 10);
-    }
-  }
-}
-
-function drawLamppost(x, y) {
-  ctx.fillStyle = '#606060';
-  ctx.fillRect(x + 3, y + 4, 4, 30);
-  ctx.fillRect(x, y + 30, 10, 4);
-  // light glow
-  ctx.fillStyle = 'rgba(255,240,180,0.15)';
-  ctx.beginPath();
-  ctx.ellipse(x + 5, y + 4, 14, 14, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#f0e880';
-  ctx.fillRect(x + 1, y, 8, 6);
-}
-
-// ---------- particles ----------
-function spawnParticles(x, y, color, count) {
-  for (let i = 0; i < count; i++) {
-    particles.push({
-      x, y,
-      vx: (Math.random() - 0.5) * 4,
-      vy: (Math.random() - 0.5) * 4,
-      life: 20 + Math.random() * 20,
-      color: color,
-      size: 2 + Math.random() * 3,
-    });
-  }
-}
-
-function updateParticles() {
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-    p.x += p.vx;
-    p.y += p.vy;
-    p.life--;
-    if (p.life <= 0) particles.splice(i, 1);
-  }
-}
-
-function drawParticles(camY) {
-  particles.forEach(p => {
+function drawParticles(camX) {
+  for (const p of particles) {
     const alpha = Math.min(1, p.life / 15);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = p.color;
-    ctx.fillRect(p.x, p.y - camY, p.size, p.size);
-  });
+    ctx.fillRect(p.x - camX, p.y, p.size, p.size);
+  }
   ctx.globalAlpha = 1;
 }
 
-// ---------- collision ----------
-function rectsOverlap(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x &&
-         a.y < b.y + b.h && a.y + a.h > b.y;
-}
-
-// ---------- game logic ----------
-function startGame() {
-  state = 'playing';
-  score = 0;
-  lives = 3;
-  scrollY = 0;
-  scrollSpeed = SCROLL_SPEED_BASE;
-  invincibleTimer = 0;
-  difficultyLevel = 0;
-  shakeTimer = 0;
-  player.x = 240;
-  player.y = 400;
-  player.hidden = false;
-  player.inBush = false;
-  player.bushTimer = 0;
-  nextRowY = 40;
-  initWorld();
-}
-
-function hitObstacle(ob) {
-  if (invincibleTimer > 0 || player.hidden) return;
-  lives--;
-  invincibleTimer = 90;
-  shakeTimer = 15;
-  spawnParticles(player.x + 11, player.y + 14, '#ff4040', 12);
-
-  if (ob.name === 'Cindy') {
-    spawnParticles(player.x + 11, player.y, COL.heart, 8);
-  }
-
-  if (lives <= 0) {
-    state = 'gameover';
-    if (score > highScore) {
-      highScore = score;
-      localStorage.setItem('bushrun_hi', highScore.toString());
-    }
-  }
-}
-
-function update() {
-  if (state !== 'playing') return;
-  frameCount++;
-
-  // scroll
-  difficultyLevel = Math.floor(score / 500);
-  scrollSpeed = SCROLL_SPEED_BASE + difficultyLevel * 0.25;
-  scrollY += scrollSpeed;
-  score += 1;
-
-  // player movement
-  let dx = 0, dy = 0;
-  if (keys['ArrowLeft'] || keys['a']) dx -= PLAYER_SPEED;
-  if (keys['ArrowRight'] || keys['d']) dx += PLAYER_SPEED;
-  if (keys['ArrowUp'] || keys['w']) dy -= PLAYER_SPEED;
-  if (keys['ArrowDown'] || keys['s']) dy += PLAYER_SPEED;
-
-  player.x += dx;
-  player.y += dy + scrollSpeed; // player scrolls with world by default
-
-  // keep player on screen (in world coords relative to camera)
-  const screenY = player.y - scrollY;
-  if (player.x < 4) player.x = 4;
-  if (player.x > canvas.width - player.w - 4) player.x = canvas.width - player.w - 4;
-  if (screenY < 20) player.y = scrollY + 20;
-  if (screenY > canvas.height - player.h - 10) player.y = scrollY + canvas.height - player.h - 10;
-
-  // invincibility
-  if (invincibleTimer > 0) invincibleTimer--;
-
-  // screen shake
-  if (shakeTimer > 0) {
-    shakeTimer--;
-    shakeX = (Math.random() - 0.5) * 6;
-    shakeY = (Math.random() - 0.5) * 6;
-  } else {
-    shakeX = 0;
-    shakeY = 0;
-  }
-
-  // check bush hiding
-  player.inBush = false;
-  player.hidden = false;
-  for (const b of bushes) {
-    const bRect = { x: b.x, y: b.y, w: b.w, h: b.h };
-    const pRect = { x: player.x, y: player.y, w: player.w, h: player.h };
-    if (rectsOverlap(pRect, bRect)) {
-      player.inBush = true;
-      // need to press space or stay still to hide
-      if (keys[' '] || (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1)) {
-        player.hidden = true;
-        player.bushTimer++;
-        // bonus points for hiding
-        if (player.bushTimer % 30 === 0) {
-          score += 25;
-          spawnParticles(player.x + 11, player.y - scrollY + 14, COL.score, 3);
-        }
-      }
-      break;
-    }
-  }
-  if (!player.inBush) {
-    player.bushTimer = 0;
-  }
-
-  // update obstacles
-  for (const ob of obstacles) {
-    ob.x += ob.vx;
-    ob.walkFrame += 0.12;
-    // bounce off screen edges
-    if (ob.x < TILE) { ob.x = TILE; ob.vx *= -1; ob.dir = 1; }
-    if (ob.x > canvas.width - ob.w - TILE) { ob.x = canvas.width - ob.w - TILE; ob.vx *= -1; ob.dir = -1; }
-
-    // collision with player
-    const oRect = { x: ob.x, y: ob.y, w: ob.w, h: ob.h };
-    const pRect = { x: player.x, y: player.y, w: player.w, h: player.h };
-    if (rectsOverlap(pRect, oRect)) {
-      hitObstacle(ob);
-    }
-  }
-
-  // extend world
-  extendWorld();
-
-  // particles
-  updateParticles();
-}
-
-// ---------- rendering ----------
-function drawGround(camY) {
-  for (let screenRow = -1; screenRow < ROWS + 2; screenRow++) {
-    const worldRow = Math.floor((camY / TILE) + screenRow);
-    const tileY = screenRow * TILE - (camY % TILE);
-    const row = worldRows[worldRow];
-    if (!row) continue;
-    for (let col = 0; col < COLS; col++) {
-      const tile = row[col];
-      const tx = col * TILE;
-      if (tile === 'path') {
-        ctx.fillStyle = COL.path;
-      } else if (tile === 'pathEdge') {
-        ctx.fillStyle = COL.pathEdge;
-      } else {
-        // grass dithering
-        ctx.fillStyle = (col + worldRow) % 2 === 0 ? COL.grass1 : COL.grass2;
-      }
-      ctx.fillRect(tx, tileY, TILE, TILE);
-    }
-  }
-}
-
 function drawHUD() {
-  // score bar background
+  // score bar
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(0, 0, canvas.width, 30);
+  ctx.fillRect(0, 0, W, 28);
 
-  // score
-  drawText(`SCORE: ${score}`, 8, 20, 14, COL.score, 'left');
+  ctx.fillStyle = COL.score;
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(`SCORE: ${score}`, 10, 19);
 
-  // high score
-  drawText(`HI: ${highScore}`, canvas.width - 8, 20, 12, '#aaa', 'right');
+  ctx.fillStyle = '#aaa';
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`HI: ${highScore}`, W - 10, 19);
 
-  // lives
-  for (let i = 0; i < lives; i++) {
-    const hx = canvas.width / 2 - 30 + i * 22;
-    ctx.fillStyle = COL.heart;
-    ctx.fillRect(hx, 8, 6, 6);
-    ctx.fillRect(hx + 8, 8, 6, 6);
-    ctx.fillRect(hx - 1, 12, 7, 4);
-    ctx.fillRect(hx + 8, 12, 7, 4);
-    ctx.fillRect(hx + 1, 16, 12, 3);
-    ctx.fillRect(hx + 3, 19, 8, 2);
-    ctx.fillRect(hx + 5, 21, 4, 1);
+  // bush combo
+  if (player.landedBushes > 1) {
+    ctx.fillStyle = COL.bushLight;
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`BUSH COMBO x${player.landedBushes}!`, W / 2, 19);
   }
 
-  // bush hint
-  if (player.inBush && !player.hidden) {
-    drawText('PRESS SPACE TO HIDE!', canvas.width / 2, canvas.height - 40, 12, '#fff', 'center');
+  // jump hint when on ground
+  if (player.onGround && score < 200) {
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('SPACE / UP / TAP to JUMP between bushes!', W / 2, H - 15);
   }
-  if (player.hidden) {
-    const alpha = 0.5 + Math.sin(frameCount * 0.1) * 0.3;
-    ctx.globalAlpha = alpha;
-    drawText('HIDDEN!', canvas.width / 2, canvas.height - 40, 16, COL.bushLight, 'center');
-    ctx.globalAlpha = 1;
+}
+
+function drawTextOutline(text, x, y, size, color, outlineColor) {
+  ctx.font = `bold ${size}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = outlineColor || '#000';
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dy = -2; dy <= 2; dy++) {
+      if (dx || dy) ctx.fillText(text, x + dx, y + dy);
+    }
   }
+  ctx.fillStyle = color || COL.text;
+  ctx.fillText(text, x, y);
 }
 
 function drawTitleScreen() {
-  // background
-  ctx.fillStyle = '#2a4a2a';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawSky();
 
-  // animated grass bg
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      ctx.fillStyle = (c + r + Math.floor(frameCount / 20)) % 2 === 0 ? COL.grass1 : COL.grass2;
-      ctx.fillRect(c * TILE, r * TILE, TILE, TILE);
-    }
+  // animated ground
+  const fakeScroll = frameCount * 1.5;
+  // bg trees
+  for (let i = 0; i < 6; i++) {
+    const tx = (i * 120 - fakeScroll * 0.3) % (720) + 60;
+    const ty = GROUND_Y;
+    ctx.fillStyle = COL.trunk;
+    ctx.fillRect(tx + 6, ty - 25, 6, 25);
+    ctx.fillStyle = COL.leaves;
+    ctx.beginPath();
+    ctx.ellipse(tx + 9, ty - 30, 14, 14, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  // decorative bushes
-  const time = frameCount * 0.02;
+  // ground
+  ctx.fillStyle = COL.grass1;
+  ctx.fillRect(0, GROUND_Y, W, 8);
+  ctx.fillStyle = COL.dirt;
+  ctx.fillRect(0, GROUND_Y + 8, W, H - GROUND_Y - 8);
+
+  // scrolling bushes on title
   for (let i = 0; i < 8; i++) {
-    drawBush({
-      x: 30 + i * 65 + Math.sin(time + i) * 10,
-      y: 340 + Math.cos(time + i * 0.7) * 15 + scrollY,
-      w: 40, h: 32, hasFlower: i % 3 === 0
-    }, scrollY);
+    const bx = ((i * 90 - fakeScroll * 0.8) % 800 + 800) % 800 - 40;
+    drawBush({ x: bx + fakeScroll * 0.8, y: GROUND_Y, w: 55, h: 32, hasFlower: i % 3 === 0, elevation: 0 }, fakeScroll * 0.8);
   }
 
   // title box
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  ctx.fillRect(60, 80, canvas.width - 120, 280);
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(W / 2 - 180, 50, 360, 240);
   ctx.strokeStyle = COL.bushLight;
   ctx.lineWidth = 3;
-  ctx.strokeRect(60, 80, canvas.width - 120, 280);
+  ctx.strokeRect(W / 2 - 180, 50, 360, 240);
 
-  // title
-  drawTextOutline('BUSHRUN', canvas.width / 2, 140, 48, COL.bushLight, '#1a3a1a');
-  drawText('8-BIT CAMPUS EDITION', canvas.width / 2, 170, 12, COL.score);
+  drawTextOutline('BUSHRUN', W / 2, 110, 48, COL.bushLight, '#1a3a1a');
 
-  // instructions
-  drawText('Skip between bushes on campus', canvas.width / 2, 210, 13, '#ccc');
-  drawText('while avoiding other students!', canvas.width / 2, 230, 13, '#ccc');
+  ctx.fillStyle = COL.score;
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('SIDE-SCROLLING CAMPUS EDITION', W / 2, 135);
 
-  drawText('ARROW KEYS / WASD to move', canvas.width / 2, 265, 11, '#aaa');
-  drawText('SPACE to hide in bushes', canvas.width / 2, 282, 11, '#aaa');
+  ctx.fillStyle = '#ccc';
+  ctx.font = 'bold 13px monospace';
+  ctx.fillText('Jump from bush to bush across campus!', W / 2, 170);
+  ctx.fillText('Build combos by chaining bush landings.', W / 2, 190);
 
-  // blink prompt
+  ctx.fillStyle = '#aaa';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('SPACE / UP / TAP to jump', W / 2, 220);
+  ctx.fillText('LEFT / RIGHT to adjust position', W / 2, 238);
+
   if (Math.floor(frameCount / 30) % 2 === 0) {
-    drawText('PRESS SPACE OR ENTER TO START', canvas.width / 2, 330, 14, COL.text);
+    ctx.fillStyle = COL.text;
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('PRESS SPACE OR ENTER TO START', W / 2, 272);
   }
 
   if (highScore > 0) {
-    drawText(`HIGH SCORE: ${highScore}`, canvas.width / 2, 360, 12, COL.score);
+    ctx.fillStyle = COL.score;
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(`HIGH SCORE: ${highScore}`, W / 2, 300);
   }
 
   frameCount++;
 }
 
 function drawGameOverScreen() {
-  // darken
   ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, W, H);
 
   ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(100, 140, canvas.width - 200, 240);
+  ctx.fillRect(W / 2 - 160, 80, 320, 230);
   ctx.strokeStyle = '#e04060';
   ctx.lineWidth = 3;
-  ctx.strokeRect(100, 140, canvas.width - 200, 240);
+  ctx.strokeRect(W / 2 - 160, 80, 320, 230);
 
-  drawTextOutline('GAME OVER', canvas.width / 2, 200, 36, '#e04060', '#400010');
-  drawText(`SCORE: ${score}`, canvas.width / 2, 245, 20, COL.score);
+  drawTextOutline('GAME OVER', W / 2, 140, 36, '#e04060', '#400010');
+
+  ctx.fillStyle = COL.score;
+  ctx.font = 'bold 20px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`SCORE: ${score}`, W / 2, 180);
 
   if (score >= highScore && score > 0) {
-    drawText('NEW HIGH SCORE!', canvas.width / 2, 275, 14, '#f0e060');
+    ctx.fillStyle = '#f0e060';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('NEW HIGH SCORE!', W / 2, 210);
   }
 
-  drawText(`HIGH SCORE: ${highScore}`, canvas.width / 2, 305, 14, '#aaa');
+  ctx.fillStyle = '#aaa';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText(`HIGH SCORE: ${highScore}`, W / 2, 240);
 
   if (Math.floor(frameCount / 30) % 2 === 0) {
-    drawText('PRESS SPACE TO PLAY AGAIN', canvas.width / 2, 350, 13, COL.text);
+    ctx.fillStyle = COL.text;
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText('PRESS SPACE TO PLAY AGAIN', W / 2, 280);
   }
 
   frameCount++;
 }
 
+// ---------- main render ----------
 function render() {
   ctx.save();
   ctx.translate(shakeX, shakeY);
@@ -814,78 +939,34 @@ function render() {
     return;
   }
 
-  const camY = scrollY;
+  const camX = scrollX;
 
-  // ground
-  drawGround(camY);
+  drawSky();
+  drawClouds(camX);
+  drawBgBuildings(camX);
+  drawBgTrees(camX);
+  drawGround(camX);
 
-  // decorations (behind everything)
-  for (const d of decorations) {
-    const dy = d.y - camY;
-    if (dy < -80 || dy > canvas.height + 20) continue;
-    if (d.type === 'tree') drawTree(d.x, dy);
-    else if (d.type === 'building') drawBuilding(d.x, dy);
-    else drawLamppost(d.x, dy);
+  // draw bushes
+  for (const b of bushes) {
+    drawBush(b, camX);
   }
 
-  // sort everything by Y for proper overlap
-  const drawables = [];
-  bushes.forEach(b => {
-    if (b.y - camY > -60 && b.y - camY < canvas.height + 40)
-      drawables.push({ type: 'bush', obj: b, y: b.y });
-  });
-  obstacles.forEach(o => {
-    if (o.y - camY > -60 && o.y - camY < canvas.height + 40)
-      drawables.push({ type: 'obstacle', obj: o, y: o.y });
-  });
-  drawables.push({ type: 'player', y: player.y });
-  drawables.sort((a, b) => a.y - b.y);
-
-  for (const d of drawables) {
-    if (d.type === 'bush') {
-      drawBush(d.obj, camY);
-    } else if (d.type === 'obstacle') {
-      const ob = d.obj;
-      const sy = ob.y - camY;
-      drawCharacter(ob.x, sy, ob.w, ob.h, ob.style, ob.walkFrame, ob.dir, ob.name);
-      // name tag
-      const nameColor = ob.name === 'Cindy' ? '#ff69b4' : '#fff';
-      drawText(ob.name, ob.x + ob.w / 2, sy - 6, 9, nameColor, 'center');
-    } else {
-      drawPlayer(camY);
-    }
+  // draw deco people (sorted by y for proper layering)
+  const sortedDeco = [...decorPeople].sort((a, b) => a.y - b.y);
+  for (const d of sortedDeco) {
+    drawDecoCharacter(d, camX);
   }
 
-  // if player is hidden, redraw the bush they're in on top
-  if (player.hidden) {
-    for (const b of bushes) {
-      if (rectsOverlap(
-        { x: player.x, y: player.y, w: player.w, h: player.h },
-        { x: b.x, y: b.y, w: b.w, h: b.h }
-      )) {
-        drawBush(b, camY);
-        // eyes peek out
-        const py = player.y - camY;
-        if (frameCount % 30 < 20) {
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(player.x + 8, py + 6, 3, 2);
-          ctx.fillRect(player.x + 14, py + 6, 3, 2);
-          ctx.fillStyle = '#000';
-          ctx.fillRect(player.x + 9, py + 7, 2, 1);
-          ctx.fillRect(player.x + 15, py + 7, 2, 1);
-        }
-        break;
-      }
-    }
-  }
+  // draw player
+  drawPlayer(camX);
 
   // particles
-  drawParticles(camY);
+  drawParticles(camX);
 
   // HUD
   drawHUD();
 
-  // game over overlay
   if (state === 'gameover') {
     drawGameOverScreen();
   }
