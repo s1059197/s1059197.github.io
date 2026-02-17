@@ -100,10 +100,10 @@ window.addEventListener('resize', resizeCanvas);
 const W = canvas.width;
 const H = canvas.height;
 const GROUND_Y = H - 60;
-const GRAVITY = 0.55;
-const JUMP_FORCE = -11;
-const SCROLL_SPEED_BASE = 2.5;
-const MAX_LIVES = 3;
+const GRAVITY = 0.45;
+const JUMP_FORCE = -12;
+const SCROLL_SPEED_BASE = 1.8;
+const MAX_LIVES = 5;
 
 // ---------- colors ----------
 const COL = {
@@ -150,6 +150,7 @@ let difficultyLevel = 0;
 let shakeTimer = 0, shakeX = 0, shakeY = 0;
 let invincibleTimer = 0;
 let respawnTimer = 0;
+let groundGraceTimer = 0; // brief grace period when touching ground
 
 // player
 const player = {
@@ -236,9 +237,10 @@ addTouchBtn(btnJump, '_jump', () => {
 
 // ---------- generation ----------
 function spawnBush(x) {
-  const bushW = 50 + Math.random() * 30;
-  const bushH = 30 + Math.random() * 15;
-  const elevation = Math.random() < 0.4 ? (30 + Math.random() * 50) : 0;
+  const bushW = 65 + Math.random() * 35;
+  const bushH = 32 + Math.random() * 15;
+  // fewer elevated bushes, and lower elevation
+  const elevation = Math.random() < 0.2 ? (20 + Math.random() * 30) : 0;
   const y = GROUND_Y - elevation;
   return { x, y, w: bushW, h: bushH, hasFlower: Math.random() < 0.3, elevation };
 }
@@ -275,12 +277,12 @@ function initWorld() {
   particles = [];
 
   // starting platform bush (big, easy to land on)
-  bushes.push({ x: 80, y: GROUND_Y, w: 80, h: 35, hasFlower: false, elevation: 0 });
+  bushes.push({ x: 60, y: GROUND_Y, w: 120, h: 38, hasFlower: false, elevation: 0 });
 
-  nextBushX = 250;
-  for (let i = 0; i < 10; i++) {
+  nextBushX = 220;
+  for (let i = 0; i < 12; i++) {
     bushes.push(spawnBush(nextBushX));
-    nextBushX += 100 + Math.random() * 120;
+    nextBushX += 80 + Math.random() * 80;
   }
 
   nextDecoX = 400;
@@ -319,7 +321,7 @@ function extendWorld() {
   const edgeX = scrollX + W + 200;
 
   while (nextBushX < edgeX) {
-    const gap = 80 + Math.random() * (100 + difficultyLevel * 10);
+    const gap = 60 + Math.random() * (70 + difficultyLevel * 8);
     nextBushX += gap;
     bushes.push(spawnBush(nextBushX));
   }
@@ -421,6 +423,7 @@ function startGame() {
   frameCount = 0;
   invincibleTimer = 0;
   respawnTimer = 0;
+  groundGraceTimer = 0;
   player.x = 120;
   player.y = GROUND_Y - player.h;
   player.vy = 0;
@@ -446,9 +449,9 @@ function update() {
   if (invincibleTimer > 0) invincibleTimer--;
   if (respawnTimer > 0) respawnTimer--;
 
-  // difficulty
-  difficultyLevel = Math.floor(score / 500);
-  scrollSpeed = SCROLL_SPEED_BASE + difficultyLevel * 0.2;
+  // difficulty (ramps slowly)
+  difficultyLevel = Math.floor(score / 800);
+  scrollSpeed = SCROLL_SPEED_BASE + difficultyLevel * 0.15;
   scrollX += scrollSpeed;
   score += 1;
 
@@ -475,8 +478,8 @@ function update() {
     const playerCX = player.x + player.w / 2;
 
     if (player.vy >= 0 &&
-        playerCX > bushLeft && playerCX < bushRight &&
-        playerBottom >= bushTop && playerBottom <= bushTop + 15) {
+        playerCX > bushLeft - 8 && playerCX < bushRight + 8 &&
+        playerBottom >= bushTop - 4 && playerBottom <= bushTop + 20) {
       player.y = bushTop - player.h;
       player.vy = 0;
       player.onGround = true;
@@ -491,19 +494,23 @@ function update() {
     }
   }
 
-  // ground collision = lose a life!
+  // ground collision = lose a life (with grace period)
   if (player.y + player.h >= GROUND_Y) {
     player.y = GROUND_Y - player.h;
     player.vy = 0;
     player.onGround = true;
     player.jumping = false;
-    // touching ground costs a life (unless invincible from recent hit)
+    player.landedBushes = 0;
+    // grace period: you have ~0.5 seconds to jump off before losing a life
     if (invincibleTimer <= 0) {
-      loseLife();
-    } else {
-      // during invincibility, just reset combo
-      player.landedBushes = 0;
+      groundGraceTimer++;
+      if (groundGraceTimer > 30) {
+        loseLife();
+        groundGraceTimer = 0;
+      }
     }
+  } else {
+    groundGraceTimer = 0;
   }
 
   // fell off screen left = instant death
@@ -844,9 +851,10 @@ function drawHUD() {
   ctx.textAlign = 'left';
   ctx.fillText(`SCORE: ${score}`, 10, 20);
 
-  // lives as hearts
+  // lives as hearts (centered)
+  const heartsWidth = MAX_LIVES * 22;
   for (let i = 0; i < MAX_LIVES; i++) {
-    drawHeart(W / 2 - 30 + i * 22, 6, i < lives);
+    drawHeart(W / 2 - heartsWidth / 2 + i * 22, 6, i < lives);
   }
 
   ctx.fillStyle = '#aaa';
@@ -862,7 +870,24 @@ function drawHUD() {
     ctx.fillText(`BUSH COMBO x${player.landedBushes}!`, W / 2, 50);
   }
 
-  // warning when low
+  // ground warning - flashing "JUMP!" when on ground with grace timer
+  if (groundGraceTimer > 0 && state === 'playing') {
+    const urgency = groundGraceTimer / 30;
+    ctx.fillStyle = `rgba(255,0,0,${0.1 + urgency * 0.2})`;
+    ctx.fillRect(0, GROUND_Y - 20, W, 20);
+    ctx.fillStyle = '#ff4040';
+    ctx.font = 'bold 18px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('JUMP! GET BACK ON A BUSH!', W / 2, GROUND_Y - 30);
+    // danger bar
+    ctx.fillStyle = 'rgba(255,0,0,0.5)';
+    ctx.fillRect(W / 2 - 60, GROUND_Y - 24, 120 * urgency, 6);
+    ctx.strokeStyle = '#ff6060';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(W / 2 - 60, GROUND_Y - 24, 120, 6);
+  }
+
+  // warning when low on lives
   if (lives === 1 && frameCount % 60 < 30) {
     ctx.fillStyle = '#ff4040';
     ctx.font = 'bold 12px monospace';
@@ -939,8 +964,8 @@ function drawTitleScreen() {
   ctx.fillText('Jump from bush to bush!', W / 2, 148);
   ctx.fillText('Touch the ground and you lose a life.', W / 2, 166);
 
-  // draw 3 hearts to show lives concept
-  for (let i = 0; i < 3; i++) drawHeart(W / 2 - 30 + i * 22, 178, true);
+  // draw 5 hearts to show lives concept
+  for (let i = 0; i < 5; i++) drawHeart(W / 2 - 52 + i * 22, 178, true);
 
   const isMobile = window.matchMedia('(pointer: coarse)').matches;
   ctx.fillStyle = '#aaa';
