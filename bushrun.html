@@ -2,28 +2,75 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>BUSHRUN</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
+  html, body {
     background: #1a1a2e;
+    width: 100%; height: 100%;
     display: flex;
     justify-content: center;
     align-items: center;
-    height: 100vh;
     font-family: monospace;
     overflow: hidden;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
   canvas {
     border: 4px solid #e94560;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
+    max-width: 100vw;
+    max-height: 100vh;
+    width: auto;
+    height: auto;
+  }
+  /* Mobile touch controls overlay */
+  #touch-controls {
+    display: none;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 120px;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #touch-controls .btn {
+    position: absolute;
+    pointer-events: auto;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 3px solid rgba(255,255,255,0.3);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: rgba(255,255,255,0.6);
+    font-size: 28px;
+    font-family: monospace;
+    font-weight: bold;
+  }
+  #touch-controls .btn:active {
+    background: rgba(255,255,255,0.3);
+    border-color: rgba(255,255,255,0.5);
+  }
+  #btn-left { width: 64px; height: 64px; bottom: 20px; left: 20px; }
+  #btn-right { width: 64px; height: 64px; bottom: 20px; left: 100px; }
+  #btn-jump { width: 80px; height: 80px; bottom: 14px; right: 20px; }
+
+  @media (pointer: coarse) {
+    #touch-controls { display: block; }
   }
 </style>
 </head>
 <body>
 <canvas id="game" width="640" height="400"></canvas>
+<div id="touch-controls">
+  <div id="btn-left" class="btn">&lt;</div>
+  <div id="btn-right" class="btn">&gt;</div>
+  <div id="btn-jump" class="btn">JUMP</div>
+</div>
 <script>
 // ============================================================
 //  BUSHRUN - A side-scrolling bush-jumping adventure
@@ -31,12 +78,32 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
+// ---------- responsive scaling ----------
+function resizeCanvas() {
+  const ratio = 640 / 400;
+  let w = window.innerWidth;
+  let h = window.innerHeight;
+  // on mobile with touch controls, leave room at bottom
+  const isMobile = window.matchMedia('(pointer: coarse)').matches;
+  if (isMobile) h -= 100;
+  if (w / h > ratio) {
+    canvas.style.height = h + 'px';
+    canvas.style.width = (h * ratio) + 'px';
+  } else {
+    canvas.style.width = w + 'px';
+    canvas.style.height = (w / ratio) + 'px';
+  }
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
 const W = canvas.width;
 const H = canvas.height;
 const GROUND_Y = H - 60;
 const GRAVITY = 0.55;
 const JUMP_FORCE = -11;
 const SCROLL_SPEED_BASE = 2.5;
+const MAX_LIVES = 3;
 
 // ---------- colors ----------
 const COL = {
@@ -75,11 +142,14 @@ const DECORATION_NAMES = ['Phil', 'Bud', 'Mark', 'Big Mike', 'Nate Dogg', 'Marla
 let state = 'title'; // title | playing | gameover
 let score = 0;
 let highScore = parseInt(localStorage.getItem('bushrun_hi') || '0');
+let lives = MAX_LIVES;
 let scrollX = 0;
 let scrollSpeed = SCROLL_SPEED_BASE;
 let frameCount = 0;
 let difficultyLevel = 0;
 let shakeTimer = 0, shakeX = 0, shakeY = 0;
+let invincibleTimer = 0;
+let respawnTimer = 0;
 
 // player
 const player = {
@@ -90,7 +160,7 @@ const player = {
   onBush: null,
   jumping: false,
   alive: true,
-  landedBushes: 0, // consecutive bush landings
+  landedBushes: 0,
 };
 
 let bushes = [];
@@ -100,7 +170,6 @@ let bgTrees = [];
 let bgBuildings = [];
 let particles = [];
 
-// track next spawn x
 let nextBushX = 250;
 let nextDecoX = 400;
 let nextCloudX = 0;
@@ -114,42 +183,64 @@ window.addEventListener('keydown', e => {
   if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
   if (state === 'title' && (e.key === ' ' || e.key === 'Enter')) startGame();
   if (state === 'gameover' && (e.key === ' ' || e.key === 'Enter')) startGame();
-  // jump
-  if (state === 'playing' && (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w') && player.onGround) {
-    player.vy = JUMP_FORCE;
-    player.onGround = false;
-    player.jumping = true;
-    player.onBush = null;
-    spawnParticles(player.x + 11, player.y + player.h, '#8b6e4e', 5);
-  }
+  if (state === 'playing' && (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w')) tryJump();
 });
 window.addEventListener('keyup', e => { keys[e.key] = false; });
 
-// touch support
-canvas.addEventListener('touchstart', e => {
-  e.preventDefault();
-  if (state === 'title' || state === 'gameover') { startGame(); return; }
-  if (state === 'playing' && player.onGround) {
+function tryJump() {
+  if (player.onGround && respawnTimer <= 0) {
     player.vy = JUMP_FORCE;
     player.onGround = false;
     player.jumping = true;
     player.onBush = null;
     spawnParticles(player.x + 11, player.y + player.h, '#8b6e4e', 5);
   }
+}
+
+// ---------- touch controls ----------
+// Canvas tap (for title/gameover + jump)
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (state === 'title' || state === 'gameover') { startGame(); return; }
+  if (state === 'playing') tryJump();
+});
+
+// D-pad buttons
+const btnLeft = document.getElementById('btn-left');
+const btnRight = document.getElementById('btn-right');
+const btnJump = document.getElementById('btn-jump');
+
+function addTouchBtn(el, keyName, action) {
+  el.addEventListener('touchstart', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    keys[keyName] = true;
+    if (action) action();
+  });
+  el.addEventListener('touchend', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    keys[keyName] = false;
+  });
+  el.addEventListener('touchcancel', e => {
+    keys[keyName] = false;
+  });
+}
+
+addTouchBtn(btnLeft, 'ArrowLeft');
+addTouchBtn(btnRight, 'ArrowRight');
+addTouchBtn(btnJump, '_jump', () => {
+  if (state === 'title' || state === 'gameover') { startGame(); return; }
+  if (state === 'playing') tryJump();
 });
 
 // ---------- generation ----------
 function spawnBush(x) {
   const bushW = 50 + Math.random() * 30;
   const bushH = 30 + Math.random() * 15;
-  // vary heights - some bushes are elevated like platforms
   const elevation = Math.random() < 0.4 ? (30 + Math.random() * 50) : 0;
   const y = GROUND_Y - elevation;
-  return {
-    x, y, w: bushW, h: bushH,
-    hasFlower: Math.random() < 0.3,
-    elevation,
-  };
+  return { x, y, w: bushW, h: bushH, hasFlower: Math.random() < 0.3, elevation };
 }
 
 function spawnDecoPerson(x) {
@@ -158,8 +249,7 @@ function spawnDecoPerson(x) {
   const big = style.big;
   return {
     x, y: GROUND_Y - (big ? 36 : 28),
-    w: big ? 30 : 22,
-    h: big ? 36 : 28,
+    w: big ? 30 : 22, h: big ? 36 : 28,
     name, style,
     walkFrame: Math.random() * Math.PI * 2,
     dir: Math.random() < 0.5 ? 1 : -1,
@@ -169,12 +259,10 @@ function spawnDecoPerson(x) {
 function spawnCindy(x) {
   const style = CHAR_STYLES['Cindy'];
   return {
-    x, y: GROUND_Y - 28,
-    w: 22, h: 28,
+    x, y: GROUND_Y - 28, w: 22, h: 28,
     name: 'Cindy', style,
     walkFrame: Math.random() * Math.PI * 2,
-    dir: -1,
-    isCindy: true,
+    dir: -1, isCindy: true,
   };
 }
 
@@ -186,28 +274,22 @@ function initWorld() {
   bgBuildings = [];
   particles = [];
 
-  // starting platform bush
-  bushes.push({ x: 80, y: GROUND_Y, w: 70, h: 35, hasFlower: false, elevation: 0 });
+  // starting platform bush (big, easy to land on)
+  bushes.push({ x: 80, y: GROUND_Y, w: 80, h: 35, hasFlower: false, elevation: 0 });
 
-  // initial bushes
   nextBushX = 250;
   for (let i = 0; i < 10; i++) {
-    const b = spawnBush(nextBushX);
-    bushes.push(b);
+    bushes.push(spawnBush(nextBushX));
     nextBushX += 100 + Math.random() * 120;
   }
 
-  // initial deco people
   nextDecoX = 400;
   for (let i = 0; i < 5; i++) {
     decorPeople.push(spawnDecoPerson(nextDecoX));
     nextDecoX += 200 + Math.random() * 300;
   }
-
-  // place a Cindy early on
   decorPeople.push(spawnCindy(700 + Math.random() * 200));
 
-  // clouds
   nextCloudX = 0;
   for (let i = 0; i < 8; i++) {
     clouds.push({
@@ -218,50 +300,40 @@ function initWorld() {
     nextCloudX += 80 + Math.random() * 100;
   }
 
-  // bg trees
   nextTreeX = 50;
   for (let i = 0; i < 10; i++) {
     bgTrees.push({ x: nextTreeX, scale: 0.5 + Math.random() * 0.5 });
     nextTreeX += 100 + Math.random() * 150;
   }
 
-  // bg buildings
   nextBuildingX = 200;
   for (let i = 0; i < 5; i++) {
-    bgBuildings.push({
-      x: nextBuildingX,
-      bw: 40 + Math.random() * 30,
-      bh: 50 + Math.random() * 40,
-    });
+    bgBuildings.push({ x: nextBuildingX, bw: 40 + Math.random() * 30, bh: 50 + Math.random() * 40 });
     nextBuildingX += 200 + Math.random() * 200;
   }
 }
 
-let nextCindyScore = 1500; // next score threshold for Cindy appearance
+let nextCindyScore = 1500;
 
 function extendWorld() {
   const edgeX = scrollX + W + 200;
 
-  // bushes
   while (nextBushX < edgeX) {
     const gap = 80 + Math.random() * (100 + difficultyLevel * 10);
     nextBushX += gap;
     bushes.push(spawnBush(nextBushX));
   }
 
-  // deco people
   while (nextDecoX < edgeX) {
     nextDecoX += 250 + Math.random() * 350;
     decorPeople.push(spawnDecoPerson(nextDecoX));
   }
 
-  // Cindy appears periodically
   if (score > nextCindyScore) {
     decorPeople.push(spawnCindy(scrollX + W + 100 + Math.random() * 200));
     nextCindyScore += 1500 + Math.random() * 1000;
   }
 
-  // clouds
   while (nextCloudX < edgeX) {
     nextCloudX += 80 + Math.random() * 120;
     clouds.push({
@@ -271,23 +343,16 @@ function extendWorld() {
     });
   }
 
-  // bg trees
   while (nextTreeX < edgeX) {
     nextTreeX += 100 + Math.random() * 150;
     bgTrees.push({ x: nextTreeX, scale: 0.5 + Math.random() * 0.5 });
   }
 
-  // bg buildings
   while (nextBuildingX < edgeX) {
     nextBuildingX += 200 + Math.random() * 250;
-    bgBuildings.push({
-      x: nextBuildingX,
-      bw: 40 + Math.random() * 30,
-      bh: 50 + Math.random() * 40,
-    });
+    bgBuildings.push({ x: nextBuildingX, bw: 40 + Math.random() * 30, bh: 50 + Math.random() * 40 });
   }
 
-  // cleanup
   const cutoff = scrollX - 300;
   bushes = bushes.filter(b => b.x + b.w > cutoff);
   decorPeople = decorPeople.filter(d => d.x > cutoff);
@@ -320,20 +385,42 @@ function updateParticles() {
   }
 }
 
-// ---------- collision ----------
-function rectOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
-  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+// ---------- lives system ----------
+function loseLife() {
+  if (invincibleTimer > 0) return;
+  lives--;
+  shakeTimer = 20;
+  invincibleTimer = 120; // 2 seconds of invincibility
+  player.landedBushes = 0;
+  spawnParticles(player.x + 11, player.y + 14, '#ff4040', 15);
+
+  if (lives <= 0) {
+    state = 'gameover';
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('bushrun_hi', highScore.toString());
+    }
+  } else {
+    // respawn: put player on nearest upcoming bush
+    respawnTimer = 30;
+    player.vy = JUMP_FORCE * 0.7;
+    player.onGround = false;
+    player.onBush = null;
+  }
 }
 
 // ---------- game logic ----------
 function startGame() {
   state = 'playing';
   score = 0;
+  lives = MAX_LIVES;
   scrollX = 0;
   scrollSpeed = SCROLL_SPEED_BASE;
   difficultyLevel = 0;
   shakeTimer = 0;
   frameCount = 0;
+  invincibleTimer = 0;
+  respawnTimer = 0;
   player.x = 120;
   player.y = GROUND_Y - player.h;
   player.vy = 0;
@@ -355,24 +442,22 @@ function update() {
   if (state !== 'playing') return;
   frameCount++;
 
+  // timers
+  if (invincibleTimer > 0) invincibleTimer--;
+  if (respawnTimer > 0) respawnTimer--;
+
   // difficulty
   difficultyLevel = Math.floor(score / 500);
   scrollSpeed = SCROLL_SPEED_BASE + difficultyLevel * 0.2;
   scrollX += scrollSpeed;
   score += 1;
 
-  // player horizontal: stays at fixed screen X, world scrolls
-  // but allow small horizontal adjustments
-  const screenPX = player.x - scrollX;
-  if (keys['ArrowRight'] || keys['d']) {
-    player.x += 2;
+  // player horizontal
+  if (respawnTimer <= 0) {
+    if (keys['ArrowRight'] || keys['d']) player.x += 2;
+    if (keys['ArrowLeft'] || keys['a']) player.x -= 2;
   }
-  if (keys['ArrowLeft'] || keys['a']) {
-    player.x -= 2;
-  }
-  // keep player roughly centered-left on screen
   player.x = Math.max(scrollX + 40, Math.min(scrollX + W * 0.6, player.x));
-  // player also moves with scroll
   player.x += scrollSpeed;
 
   // gravity
@@ -389,7 +474,6 @@ function update() {
     const playerBottom = player.y + player.h;
     const playerCX = player.x + player.w / 2;
 
-    // check if player lands on top of bush
     if (player.vy >= 0 &&
         playerCX > bushLeft && playerCX < bushRight &&
         playerBottom >= bushTop && playerBottom <= bushTop + 15) {
@@ -400,35 +484,31 @@ function update() {
       if (player.jumping) {
         player.jumping = false;
         player.landedBushes++;
-        score += 50 * player.landedBushes; // combo bonus
+        score += 50 * player.landedBushes;
         spawnParticles(player.x + 11, player.y + player.h, COL.bushLight, 6);
       }
       break;
     }
   }
 
-  // ground collision
+  // ground collision = lose a life!
   if (player.y + player.h >= GROUND_Y) {
     player.y = GROUND_Y - player.h;
     player.vy = 0;
     player.onGround = true;
-    // landing on ground resets bush combo
-    if (player.landedBushes > 0) {
+    player.jumping = false;
+    // touching ground costs a life (unless invincible from recent hit)
+    if (invincibleTimer <= 0) {
+      loseLife();
+    } else {
+      // during invincibility, just reset combo
       player.landedBushes = 0;
     }
   }
 
-  // if player falls off screen bottom (shouldn't happen with ground, but safety)
-  if (player.y > H + 50) {
-    state = 'gameover';
-    if (score > highScore) {
-      highScore = score;
-      localStorage.setItem('bushrun_hi', highScore.toString());
-    }
-  }
-
-  // if player scrolls off the left side, game over
+  // fell off screen left = instant death
   if (player.x < scrollX - 30) {
+    lives = 0;
     state = 'gameover';
     if (score > highScore) {
       highScore = score;
@@ -439,13 +519,13 @@ function update() {
   // screen shake
   if (shakeTimer > 0) {
     shakeTimer--;
-    shakeX = (Math.random() - 0.5) * 4;
-    shakeY = (Math.random() - 0.5) * 4;
+    shakeX = (Math.random() - 0.5) * 6;
+    shakeY = (Math.random() - 0.5) * 6;
   } else {
     shakeX = 0; shakeY = 0;
   }
 
-  // update deco people (just walking animation)
+  // deco people animation
   for (const d of decorPeople) {
     d.walkFrame += 0.08;
   }
@@ -456,7 +536,6 @@ function update() {
 
 // ---------- drawing ----------
 function drawSky() {
-  // gradient sky
   const grad = ctx.createLinearGradient(0, 0, 0, H);
   grad.addColorStop(0, COL.sky1);
   grad.addColorStop(0.5, COL.sky2);
@@ -494,7 +573,6 @@ function drawBgBuildings(camX) {
     ctx.fillRect(sx + 2, by + 2, b.bw - 4, b.bh - 2);
     ctx.fillStyle = COL.roof;
     ctx.fillRect(sx - 3, by - 4, b.bw + 6, 6);
-    // windows
     for (let wy = 0; wy < 3; wy++) {
       for (let wx = 0; wx < 2; wx++) {
         const lit = Math.sin(b.x + wx * 3 + wy * 7 + frameCount * 0.01) > 0;
@@ -511,10 +589,8 @@ function drawBgTrees(camX) {
     if (sx > W + 60 || sx < -60) continue;
     const s = t.scale;
     const ty = GROUND_Y;
-    // trunk
     ctx.fillStyle = COL.trunk;
     ctx.fillRect(sx + 6 * s, ty - 30 * s, 8 * s, 30 * s);
-    // leaves
     ctx.fillStyle = COL.leavesDark;
     ctx.beginPath();
     ctx.ellipse(sx + 10 * s, ty - 35 * s, 18 * s, 18 * s, 0, 0, Math.PI * 2);
@@ -527,23 +603,22 @@ function drawBgTrees(camX) {
 }
 
 function drawGround(camX) {
-  // grass strip
+  // danger zone coloring when low on lives
+  if (lives <= 1 && lives > 0) {
+    ctx.fillStyle = 'rgba(255,50,50,0.15)';
+    ctx.fillRect(0, GROUND_Y - 5, W, 5);
+  }
   ctx.fillStyle = COL.grass1;
   ctx.fillRect(0, GROUND_Y, W, 8);
   ctx.fillStyle = COL.grass2;
   for (let gx = 0; gx < W; gx += 16) {
     const offset = (gx + Math.floor(camX)) % 32;
-    if (offset < 16) {
-      ctx.fillRect(gx, GROUND_Y, 8, 4);
-    }
+    if (offset < 16) ctx.fillRect(gx, GROUND_Y, 8, 4);
   }
-  // dirt
   ctx.fillStyle = COL.dirt;
   ctx.fillRect(0, GROUND_Y + 8, W, 20);
   ctx.fillStyle = COL.dirtDark;
   ctx.fillRect(0, GROUND_Y + 28, W, H - GROUND_Y - 28);
-
-  // path on ground
   ctx.fillStyle = COL.path;
   ctx.fillRect(0, GROUND_Y + 2, W, 6);
 }
@@ -553,31 +628,26 @@ function drawBush(b, camX) {
   const sy = b.y - b.h;
   if (sx > W + 60 || sx + b.w < -60) return;
 
-  // shadow
   ctx.fillStyle = COL.shadow;
   ctx.beginPath();
   ctx.ellipse(sx + b.w / 2, b.y + 2, b.w / 2 + 4, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // main body
   ctx.fillStyle = COL.bush;
   ctx.beginPath();
   ctx.ellipse(sx + b.w / 2, sy + b.h / 2, b.w / 2, b.h / 2, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // highlight
   ctx.fillStyle = COL.bushLight;
   ctx.beginPath();
   ctx.ellipse(sx + b.w / 2 - 5, sy + b.h / 2 - 5, b.w / 3, b.h / 3, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // dark part
   ctx.fillStyle = COL.bushDark;
   ctx.beginPath();
   ctx.ellipse(sx + b.w / 2 + 4, sy + b.h / 2 + 6, b.w / 3, b.h / 4, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // flower
   if (b.hasFlower) {
     ctx.fillStyle = COL.bushFlower;
     ctx.fillRect(sx + b.w / 2 + 3, sy + b.h / 2 - 8, 5, 5);
@@ -591,28 +661,23 @@ function drawCharacter(sx, sy, w, h, style, walkFrame, dir) {
   const bh = big ? 36 : 28;
   const legOffset = Math.sin(walkFrame) * 3;
 
-  // shadow
   ctx.fillStyle = COL.shadow;
   ctx.beginPath();
   ctx.ellipse(sx + bw / 2, sy + bh, bw / 2 + 2, 4, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // legs
   ctx.fillStyle = '#404060';
   ctx.fillRect(sx + 4, sy + bh - 10 + legOffset, 5, 10);
   ctx.fillRect(sx + bw - 9, sy + bh - 10 - legOffset, 5, 10);
 
-  // body
   ctx.fillStyle = style.shirt;
   ctx.fillRect(sx + 2, sy + 8, bw - 4, bh - 16);
 
-  // head
   ctx.fillStyle = style.skin;
   const headW = big ? 14 : 12;
   const headH = big ? 12 : 10;
   ctx.fillRect(sx + (bw - headW) / 2, sy, headW, headH);
 
-  // hair
   ctx.fillStyle = style.hair;
   if (style.female) {
     ctx.fillRect(sx + (bw - headW) / 2 - 1, sy - 2, headW + 2, 5);
@@ -622,17 +687,13 @@ function drawCharacter(sx, sy, w, h, style, walkFrame, dir) {
     ctx.fillRect(sx + (bw - headW) / 2, sy - 2, headW, 4);
   }
 
-  // eyes
   ctx.fillStyle = style.shades ? '#101010' : '#202020';
   const eyeY = sy + 4;
   const eyeSize = style.shades ? 4 : 2;
   ctx.fillRect(sx + bw / 2 - 4, eyeY, eyeSize, style.shades ? 3 : 2);
   ctx.fillRect(sx + bw / 2 + 2, eyeY, eyeSize, style.shades ? 3 : 2);
-  if (style.shades) {
-    ctx.fillRect(sx + bw / 2 - 5, eyeY, 12, 2);
-  }
+  if (style.shades) ctx.fillRect(sx + bw / 2 - 5, eyeY, 12, 2);
 
-  // arms
   ctx.fillStyle = style.skin;
   ctx.fillRect(sx - 2, sy + 10 - legOffset, 4, 10);
   ctx.fillRect(sx + bw - 2, sy + 10 + legOffset, 4, 10);
@@ -640,21 +701,17 @@ function drawCharacter(sx, sy, w, h, style, walkFrame, dir) {
 
 function drawBrokenHeart(cx, cy, scale) {
   const s = scale || 1;
-  // left half
   ctx.fillStyle = COL.heart;
   ctx.fillRect(cx - 7 * s, cy, 5 * s, 5 * s);
   ctx.fillRect(cx - 8 * s, cy + 2 * s, 6 * s, 4 * s);
   ctx.fillRect(cx - 6 * s, cy + 6 * s, 4 * s, 3 * s);
   ctx.fillRect(cx - 4 * s, cy + 9 * s, 2 * s, 2 * s);
-  // right half
   ctx.fillRect(cx + 2 * s, cy, 5 * s, 5 * s);
   ctx.fillRect(cx + 2 * s, cy + 2 * s, 6 * s, 4 * s);
   ctx.fillRect(cx + 2 * s, cy + 6 * s, 4 * s, 3 * s);
   ctx.fillRect(cx + 2 * s, cy + 9 * s, 2 * s, 2 * s);
-  // crack down the middle
   ctx.fillStyle = COL.heartCrack;
   ctx.fillRect(cx - 1 * s, cy - 1 * s, 2 * s, 13 * s);
-  // jagged crack detail
   ctx.fillRect(cx - 2 * s, cy + 3 * s, 2 * s, 2 * s);
   ctx.fillRect(cx + 1 * s, cy + 6 * s, 2 * s, 2 * s);
 }
@@ -664,10 +721,8 @@ function drawCindyLabel(sx, sy, bw) {
   const labelY = sy - 30;
   const bobY = Math.sin(frameCount * 0.06) * 3;
 
-  // broken heart above label
   drawBrokenHeart(labelX, labelY - 18 + bobY, 1.2);
 
-  // "CINDY" label with background
   const textW = 50;
   ctx.fillStyle = 'rgba(0,0,0,0.6)';
   ctx.fillRect(labelX - textW / 2 - 2, labelY + bobY - 2, textW + 4, 16);
@@ -680,7 +735,6 @@ function drawCindyLabel(sx, sy, bw) {
   ctx.textAlign = 'center';
   ctx.fillText('CINDY', labelX, labelY + bobY + 10);
 
-  // broken heart label
   ctx.fillStyle = '#ff6688';
   ctx.font = 'bold 8px monospace';
   ctx.fillText('\u2764\u200D\u{1FA79}', labelX, labelY + bobY + 22);
@@ -689,41 +743,38 @@ function drawCindyLabel(sx, sy, bw) {
 function drawDecoCharacter(d, camX) {
   const sx = d.x - camX;
   if (sx > W + 60 || sx < -60) return;
-  const sy = d.y;
 
-  drawCharacter(sx, sy, d.w, d.h, d.style, d.walkFrame, d.dir);
+  drawCharacter(sx, d.y, d.w, d.h, d.style, d.walkFrame, d.dir);
 
   if (d.isCindy) {
-    // big visible label for Cindy
-    drawCindyLabel(sx, sy, d.w);
+    drawCindyLabel(sx, d.y, d.w);
   } else {
-    // small name tag for others
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.font = 'bold 8px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(d.name, sx + d.w / 2, sy - 4);
+    ctx.fillText(d.name, sx + d.w / 2, d.y - 4);
     ctx.fillStyle = '#ddd';
-    ctx.fillText(d.name, sx + d.w / 2 - 1, sy - 5);
+    ctx.fillText(d.name, sx + d.w / 2 - 1, d.y - 5);
   }
 }
 
 function drawPlayer(camX) {
   const px = player.x - camX;
   const py = player.y;
-
   if (px > W + 30 || px < -30) return;
+
+  // invincibility flash
+  if (invincibleTimer > 0 && Math.floor(frameCount / 3) % 2 === 0) return;
 
   const walking = player.onGround && (keys['ArrowLeft'] || keys['ArrowRight'] || keys['a'] || keys['d']);
   const walkF = walking ? frameCount * 0.3 : 0;
   const legOff = Math.sin(walkF) * 3;
 
-  // shadow
   ctx.fillStyle = COL.shadow;
   ctx.beginPath();
   ctx.ellipse(px + 11, GROUND_Y + 2, 13, 4, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // jumping squash/stretch
   const scaleY = player.vy < -5 ? 0.85 : (player.vy > 5 ? 1.15 : 1);
 
   ctx.save();
@@ -731,29 +782,23 @@ function drawPlayer(camX) {
   ctx.scale(1, scaleY);
   ctx.translate(-(px + 11), -(py + player.h));
 
-  // legs
   ctx.fillStyle = '#305090';
   const lOff = player.onGround ? legOff : 3;
   ctx.fillRect(px + 4, py + 20 + lOff, 5, 10);
   ctx.fillRect(px + 13, py + 20 - lOff, 5, 10);
 
-  // body
   ctx.fillStyle = COL.player;
   ctx.fillRect(px + 2, py + 8, 18, 14);
 
-  // backpack
   ctx.fillStyle = '#c04040';
   ctx.fillRect(px - 1, py + 10, 4, 10);
 
-  // head
   ctx.fillStyle = COL.playerSkin;
   ctx.fillRect(px + 5, py, 12, 10);
 
-  // hair
   ctx.fillStyle = COL.playerHair;
   ctx.fillRect(px + 4, py - 2, 14, 4);
 
-  // eyes
   ctx.fillStyle = '#fff';
   ctx.fillRect(px + 7, py + 3, 3, 3);
   ctx.fillRect(px + 13, py + 3, 3, 3);
@@ -761,7 +806,6 @@ function drawPlayer(camX) {
   ctx.fillRect(px + 8, py + 4, 2, 2);
   ctx.fillRect(px + 14, py + 4, 2, 2);
 
-  // arms
   ctx.fillStyle = COL.playerSkin;
   ctx.fillRect(px - 2, py + 10 + lOff * 0.5, 4, 8);
   ctx.fillRect(px + 20, py + 10 - lOff * 0.5, 4, 8);
@@ -779,35 +823,64 @@ function drawParticles(camX) {
   ctx.globalAlpha = 1;
 }
 
+function drawHeart(x, y, filled) {
+  ctx.fillStyle = filled ? COL.heart : 'rgba(255,255,255,0.15)';
+  // pixel heart
+  ctx.fillRect(x, y + 1, 6, 6);
+  ctx.fillRect(x + 8, y + 1, 6, 6);
+  ctx.fillRect(x - 1, y + 4, 7, 4);
+  ctx.fillRect(x + 8, y + 4, 7, 4);
+  ctx.fillRect(x + 1, y + 8, 12, 3);
+  ctx.fillRect(x + 3, y + 11, 8, 2);
+  ctx.fillRect(x + 5, y + 13, 4, 1);
+}
+
 function drawHUD() {
-  // score bar
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(0, 0, W, 28);
+  ctx.fillRect(0, 0, W, 30);
 
   ctx.fillStyle = COL.score;
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText(`SCORE: ${score}`, 10, 19);
+  ctx.fillText(`SCORE: ${score}`, 10, 20);
+
+  // lives as hearts
+  for (let i = 0; i < MAX_LIVES; i++) {
+    drawHeart(W / 2 - 30 + i * 22, 6, i < lives);
+  }
 
   ctx.fillStyle = '#aaa';
   ctx.font = 'bold 12px monospace';
   ctx.textAlign = 'right';
-  ctx.fillText(`HI: ${highScore}`, W - 10, 19);
+  ctx.fillText(`HI: ${highScore}`, W - 10, 20);
 
   // bush combo
   if (player.landedBushes > 1) {
     ctx.fillStyle = COL.bushLight;
-    ctx.font = 'bold 12px monospace';
+    ctx.font = 'bold 14px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`BUSH COMBO x${player.landedBushes}!`, W / 2, 19);
+    ctx.fillText(`BUSH COMBO x${player.landedBushes}!`, W / 2, 50);
   }
 
-  // jump hint when on ground
+  // warning when low
+  if (lives === 1 && frameCount % 60 < 30) {
+    ctx.fillStyle = '#ff4040';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('LAST LIFE! STAY ON THE BUSHES!', W / 2, H - 75);
+  }
+
+  // hint at start
+  const isMobile = window.matchMedia('(pointer: coarse)').matches;
   if (player.onGround && score < 200) {
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('SPACE / UP / TAP to JUMP between bushes!', W / 2, H - 15);
+    if (isMobile) {
+      ctx.fillText('TAP JUMP to hop between bushes!', W / 2, H - 75);
+    } else {
+      ctx.fillText('SPACE / UP to JUMP between bushes!', W / 2, H - 75);
+    }
   }
 }
 
@@ -826,67 +899,68 @@ function drawTextOutline(text, x, y, size, color, outlineColor) {
 
 function drawTitleScreen() {
   drawSky();
-
-  // animated ground
   const fakeScroll = frameCount * 1.5;
-  // bg trees
+
   for (let i = 0; i < 6; i++) {
-    const tx = (i * 120 - fakeScroll * 0.3) % (720) + 60;
-    const ty = GROUND_Y;
+    const tx = (i * 120 - fakeScroll * 0.3) % 720 + 60;
     ctx.fillStyle = COL.trunk;
-    ctx.fillRect(tx + 6, ty - 25, 6, 25);
+    ctx.fillRect(tx + 6, GROUND_Y - 25, 6, 25);
     ctx.fillStyle = COL.leaves;
     ctx.beginPath();
-    ctx.ellipse(tx + 9, ty - 30, 14, 14, 0, 0, Math.PI * 2);
+    ctx.ellipse(tx + 9, GROUND_Y - 30, 14, 14, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // ground
   ctx.fillStyle = COL.grass1;
   ctx.fillRect(0, GROUND_Y, W, 8);
   ctx.fillStyle = COL.dirt;
   ctx.fillRect(0, GROUND_Y + 8, W, H - GROUND_Y - 8);
 
-  // scrolling bushes on title
   for (let i = 0; i < 8; i++) {
     const bx = ((i * 90 - fakeScroll * 0.8) % 800 + 800) % 800 - 40;
     drawBush({ x: bx + fakeScroll * 0.8, y: GROUND_Y, w: 55, h: 32, hasFlower: i % 3 === 0, elevation: 0 }, fakeScroll * 0.8);
   }
 
-  // title box
   ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillRect(W / 2 - 180, 50, 360, 240);
+  ctx.fillRect(W / 2 - 190, 40, 380, 260);
   ctx.strokeStyle = COL.bushLight;
   ctx.lineWidth = 3;
-  ctx.strokeRect(W / 2 - 180, 50, 360, 240);
+  ctx.strokeRect(W / 2 - 190, 40, 380, 260);
 
-  drawTextOutline('BUSHRUN', W / 2, 110, 48, COL.bushLight, '#1a3a1a');
+  drawTextOutline('BUSHRUN', W / 2, 95, 48, COL.bushLight, '#1a3a1a');
 
   ctx.fillStyle = COL.score;
-  ctx.font = 'bold 12px monospace';
+  ctx.font = 'bold 11px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('SIDE-SCROLLING CAMPUS EDITION', W / 2, 135);
+  ctx.fillText('SIDE-SCROLLING CAMPUS EDITION', W / 2, 118);
 
   ctx.fillStyle = '#ccc';
-  ctx.font = 'bold 13px monospace';
-  ctx.fillText('Jump from bush to bush across campus!', W / 2, 170);
-  ctx.fillText('Build combos by chaining bush landings.', W / 2, 190);
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('Jump from bush to bush!', W / 2, 148);
+  ctx.fillText('Touch the ground and you lose a life.', W / 2, 166);
 
+  // draw 3 hearts to show lives concept
+  for (let i = 0; i < 3; i++) drawHeart(W / 2 - 30 + i * 22, 178, true);
+
+  const isMobile = window.matchMedia('(pointer: coarse)').matches;
   ctx.fillStyle = '#aaa';
   ctx.font = 'bold 11px monospace';
-  ctx.fillText('SPACE / UP / TAP to jump', W / 2, 220);
-  ctx.fillText('LEFT / RIGHT to adjust position', W / 2, 238);
+  if (isMobile) {
+    ctx.fillText('Use the on-screen buttons to play', W / 2, 210);
+  } else {
+    ctx.fillText('SPACE / UP to jump, LEFT / RIGHT to adjust', W / 2, 210);
+  }
 
   if (Math.floor(frameCount / 30) % 2 === 0) {
     ctx.fillStyle = COL.text;
     ctx.font = 'bold 14px monospace';
-    ctx.fillText('PRESS SPACE OR ENTER TO START', W / 2, 272);
+    ctx.fillText(isMobile ? 'TAP TO START' : 'PRESS SPACE OR ENTER', W / 2, 250);
   }
 
   if (highScore > 0) {
     ctx.fillStyle = COL.score;
     ctx.font = 'bold 12px monospace';
-    ctx.fillText(`HIGH SCORE: ${highScore}`, W / 2, 300);
+    ctx.fillText(`HIGH SCORE: ${highScore}`, W / 2, 280);
   }
 
   frameCount++;
@@ -897,32 +971,38 @@ function drawGameOverScreen() {
   ctx.fillRect(0, 0, W, H);
 
   ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(W / 2 - 160, 80, 320, 230);
+  ctx.fillRect(W / 2 - 160, 70, 320, 250);
   ctx.strokeStyle = '#e04060';
   ctx.lineWidth = 3;
-  ctx.strokeRect(W / 2 - 160, 80, 320, 230);
+  ctx.strokeRect(W / 2 - 160, 70, 320, 250);
 
-  drawTextOutline('GAME OVER', W / 2, 140, 36, '#e04060', '#400010');
+  drawTextOutline('GAME OVER', W / 2, 125, 36, '#e04060', '#400010');
 
   ctx.fillStyle = COL.score;
   ctx.font = 'bold 20px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(`SCORE: ${score}`, W / 2, 180);
+  ctx.fillText(`SCORE: ${score}`, W / 2, 165);
 
   if (score >= highScore && score > 0) {
     ctx.fillStyle = '#f0e060';
     ctx.font = 'bold 14px monospace';
-    ctx.fillText('NEW HIGH SCORE!', W / 2, 210);
+    ctx.fillText('NEW HIGH SCORE!', W / 2, 195);
   }
 
   ctx.fillStyle = '#aaa';
   ctx.font = 'bold 14px monospace';
-  ctx.fillText(`HIGH SCORE: ${highScore}`, W / 2, 240);
+  ctx.fillText(`HIGH SCORE: ${highScore}`, W / 2, 225);
 
+  // best combo
+  ctx.fillStyle = COL.bushLight;
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText(`Best bush combo: x${player.landedBushes || 0}`, W / 2, 255);
+
+  const isMobile = window.matchMedia('(pointer: coarse)').matches;
   if (Math.floor(frameCount / 30) % 2 === 0) {
     ctx.fillStyle = COL.text;
     ctx.font = 'bold 13px monospace';
-    ctx.fillText('PRESS SPACE TO PLAY AGAIN', W / 2, 280);
+    ctx.fillText(isMobile ? 'TAP TO PLAY AGAIN' : 'PRESS SPACE TO PLAY AGAIN', W / 2, 295);
   }
 
   frameCount++;
@@ -947,34 +1027,20 @@ function render() {
   drawBgTrees(camX);
   drawGround(camX);
 
-  // draw bushes
-  for (const b of bushes) {
-    drawBush(b, camX);
-  }
+  for (const b of bushes) drawBush(b, camX);
 
-  // draw deco people (sorted by y for proper layering)
   const sortedDeco = [...decorPeople].sort((a, b) => a.y - b.y);
-  for (const d of sortedDeco) {
-    drawDecoCharacter(d, camX);
-  }
+  for (const d of sortedDeco) drawDecoCharacter(d, camX);
 
-  // draw player
   drawPlayer(camX);
-
-  // particles
   drawParticles(camX);
-
-  // HUD
   drawHUD();
 
-  if (state === 'gameover') {
-    drawGameOverScreen();
-  }
+  if (state === 'gameover') drawGameOverScreen();
 
   ctx.restore();
 }
 
-// ---------- main loop ----------
 function gameLoop() {
   update();
   render();
