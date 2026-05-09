@@ -12,7 +12,6 @@
     width: 100%; height: 100%;
     overflow: hidden;
     background: #000;
-    font-family: 'Courier New', monospace;
     touch-action: none;
     -webkit-user-select: none;
     user-select: none;
@@ -21,7 +20,8 @@
     display: block;
     width: 100%;
     height: 100%;
-    cursor: pointer;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
   }
   #caption {
     position: fixed;
@@ -31,32 +31,33 @@
     font-family: 'Courier New', monospace;
     font-size: 13px;
     text-align: center;
-    padding: 6px 12px;
-    min-height: 36px;
+    padding: 7px 14px;
+    min-height: 38px;
     display: flex;
     align-items: center;
     justify-content: center;
     border-top: 2px solid #fff;
     opacity: 0;
-    transition: opacity 0.2s;
+    transition: opacity 0.15s;
     pointer-events: none;
     z-index: 10;
   }
   #caption.visible { opacity: 1; }
   #tap-hint {
     position: fixed;
-    bottom: 50px;
+    bottom: 46px;
     left: 50%;
     transform: translateX(-50%);
     color: #ffff00;
     font-size: 11px;
     font-family: 'Courier New', monospace;
-    background: rgba(0,0,0,0.5);
-    padding: 4px 8px;
+    background: rgba(0,0,0,0.7);
+    padding: 4px 10px;
     border: 1px solid #ffff00;
     pointer-events: none;
-    animation: blink 1.2s step-end infinite;
+    animation: blink 1s step-end infinite;
     white-space: nowrap;
+    z-index: 11;
   }
   @keyframes blink { 50% { opacity: 0; } }
 </style>
@@ -64,23 +65,27 @@
 <body>
 <canvas id="stage"></canvas>
 <div id="caption"></div>
-<div id="tap-hint">[ TAP SCREEN TO MAKE TINY ELVIS TALK ]</div>
+<div id="tap-hint">[ TAP TO MAKE TINY ELVIS TALK ]</div>
 
 <script>
+'use strict';
 const canvas = document.getElementById('stage');
-const ctx = canvas.getContext('2d');
-const captionEl = document.getElementById('caption');
-const hintEl = document.getElementById('tap-hint');
+const ctx    = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
 
-// --- Resize ---
+const captionEl = document.getElementById('caption');
+const hintEl    = document.getElementById('tap-hint');
+
+// ─── RESIZE ───────────────────────────────────────────────────────────────────
+let W = 0, H = 0;
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  draw();
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
 }
 window.addEventListener('resize', resize);
+resize();
 
-// --- Audio lines (A = setup, B = punchline "HUGE") ---
+// ─── AUDIO ────────────────────────────────────────────────────────────────────
 const LINES_A = [
   "Look at that icon, man...",
   "Would you look at that dialog box...",
@@ -95,760 +100,371 @@ const LINES_B = [
   "It is GIGANTIC, man. HUGE."
 ];
 
-function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-
-// --- Audio ---
 let audioCtx = null;
-const audioBuffers = { A: [], B: [] };
-let audioLoaded = false;
+const bufsA = [], bufsB = [];
 
 function initAudio() {
   if (audioCtx) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const files = [
-    ['A', 'audio/TWAV_A1.WAV'], ['A', 'audio/TWAV_A2.WAV'], ['A', 'audio/TWAV_A3.WAV'],
-    ['A', 'audio/TWAV_A4.WAV'], ['A', 'audio/TWAV_A5.WAV'], ['A', 'audio/TWAV_A6.WAV'],
-    ['B', 'audio/TWAV_B1.WAV'], ['B', 'audio/TWAV_B2.WAV'], ['B', 'audio/TWAV_B3.WAV']
-  ];
-  let loaded = 0;
-  files.forEach(([set, url]) => {
+  [
+    ['A','audio/TWAV_A1.WAV'],['A','audio/TWAV_A2.WAV'],['A','audio/TWAV_A3.WAV'],
+    ['A','audio/TWAV_A4.WAV'],['A','audio/TWAV_A5.WAV'],['A','audio/TWAV_A6.WAV'],
+    ['B','audio/TWAV_B1.WAV'],['B','audio/TWAV_B2.WAV'],['B','audio/TWAV_B3.WAV'],
+  ].forEach(([set, url]) => {
     fetch(url).then(r => r.arrayBuffer())
-      .then(buf => audioCtx.decodeAudioData(buf))
-      .then(decoded => {
-        audioBuffers[set].push(decoded);
-        loaded++;
-        if (loaded === files.length) audioLoaded = true;
-      }).catch(() => { loaded++; if (loaded === files.length) audioLoaded = true; });
+      .then(ab => audioCtx.decodeAudioData(ab))
+      .then(buf => (set === 'A' ? bufsA : bufsB).push(buf))
+      .catch(() => {});
   });
 }
 
-function playBuffer(buf) {
-  if (!buf || !audioCtx) return Promise.resolve(buf ? buf.duration : 0);
+function playBuf(buf) {
+  if (!buf || !audioCtx) return Promise.resolve(1.5);
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return new Promise(resolve => {
-    const src = audioCtx.createBufferSource();
-    src.buffer = buf;
-    src.connect(audioCtx.destination);
-    src.onended = () => resolve(buf.duration);
-    src.start();
+    const s = audioCtx.createBufferSource();
+    s.buffer = buf;
+    s.connect(audioCtx.destination);
+    s.onended = () => resolve(buf.duration);
+    s.start();
   });
 }
 
-// --- Elvis State Machine ---
-const STATE = { IDLE: 0, RISING: 1, SPEAKING_A: 2, GESTURING: 3, SPEAKING_B: 4, DANCING: 5, SITTING: 6 };
-let elvisState = STATE.IDLE;
-let isPerforming = false;
-let animT = 0; // 0..1 for transitions
-let danceFrame = 0;
-let danceDir = 1;
+// ─── PIXEL ART SPRITES ────────────────────────────────────────────────────────
+// 0=transparent 1=black 2=white 3=skin 4=yellow(gloves) 5=cyan(shoes) 6=glasses 7=gold(belt)
+const PAL = [null,'#1a1a1a','#f0f0f0','#f5c070','#ffe600','#28dde8','#444','#c8960a'];
 
-// --- Main animation loop ---
-let lastTime = 0;
+const PS = 5; // pixels per sprite-pixel
+
+const SPR = {
+  crouch: [
+    [0,0,1,1,1,0,0,0],
+    [0,1,1,2,1,1,0,0],
+    [0,1,3,3,3,1,0,0],
+    [0,0,3,6,3,0,0,0],
+    [0,2,2,2,2,2,0,0],
+    [4,2,2,7,2,2,4,0],
+    [0,5,2,5,2,5,0,0],
+    [0,5,5,0,5,5,0,0],
+  ],
+  stand: [
+    [0,0,1,1,1,0,0,0],
+    [0,1,1,2,1,1,0,0],
+    [0,1,3,3,3,1,0,0],
+    [0,0,3,6,3,0,0,0],
+    [0,0,0,3,0,0,0,0],
+    [0,2,2,2,2,2,0,0],
+    [0,2,2,2,2,2,0,0],
+    [0,2,7,7,7,2,0,0],
+    [4,0,2,0,2,0,4,0],
+    [0,0,2,0,2,0,0,0],
+    [0,0,2,0,2,0,0,0],
+    [0,0,2,0,2,0,0,0],
+    [0,5,5,0,5,5,0,0],
+  ],
+  hips: [
+    [0,0,0,1,1,1,0,0,0,0],
+    [0,0,1,1,2,1,1,0,0,0],
+    [0,0,1,3,3,3,1,0,0,0],
+    [0,0,0,3,6,3,0,0,0,0],
+    [0,0,0,0,3,0,0,0,0,0],
+    [0,0,2,2,2,2,2,0,0,0],
+    [4,2,2,2,2,2,2,2,4,0],
+    [4,0,2,7,7,2,0,4,0,0],
+    [0,0,0,2,0,2,0,0,0,0],
+    [0,0,0,2,0,2,0,0,0,0],
+    [0,0,0,2,0,2,0,0,0,0],
+    [0,0,5,5,0,5,5,0,0,0],
+  ],
+  point: [
+    [0,0,0,1,1,1,0,0,0,0,0,0,4],
+    [0,0,1,1,2,1,1,0,0,0,0,2,0],
+    [0,0,1,3,3,3,1,0,0,0,2,0,0],
+    [0,0,0,3,6,3,0,0,0,2,0,0,0],
+    [0,0,0,0,3,0,0,0,0,0,0,0,0],
+    [0,2,2,2,2,2,2,2,2,0,0,0,0],
+    [4,0,2,2,2,2,2,0,0,0,0,0,0],
+    [0,0,2,7,7,7,2,0,0,0,0,0,0],
+    [0,0,0,2,0,2,0,0,0,0,0,0,0],
+    [0,0,0,2,0,2,0,0,0,0,0,0,0],
+    [0,0,0,2,0,2,0,0,0,0,0,0,0],
+    [0,0,5,5,0,5,5,0,0,0,0,0,0],
+  ],
+  armsup: [
+    [0,0,0,0,1,1,1,0,0,0,0,0,0,0],
+    [0,0,0,1,1,2,1,1,0,0,0,0,0,0],
+    [4,0,0,1,3,3,3,1,0,0,0,0,0,4],
+    [0,2,0,0,3,6,3,0,0,0,0,0,2,0],
+    [0,0,2,0,0,3,0,0,0,0,0,2,0,0],
+    [0,0,0,2,2,2,2,2,2,2,2,0,0,0],
+    [0,0,0,2,2,7,7,2,2,2,0,0,0,0],
+    [0,0,0,0,2,0,0,2,0,0,0,0,0,0],
+    [0,0,0,0,2,0,0,2,0,0,0,0,0,0],
+    [0,0,0,0,2,0,0,2,0,0,0,0,0,0],
+    [0,0,0,5,5,0,0,5,5,0,0,0,0,0],
+  ],
+  huge: [
+    [0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,1,1,2,1,1,0,0,0,0,0,0,0,0,0],
+    [4,0,0,0,0,1,3,3,3,1,0,0,0,0,0,0,0,0,4],
+    [2,0,0,0,0,0,3,6,3,0,0,0,0,0,0,0,0,2,0],
+    [2,2,0,0,0,0,0,3,0,0,0,0,0,0,0,0,2,2,0],
+    [0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,0,0],
+    [0,0,0,0,0,2,2,7,7,7,2,2,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,2,0,0,2,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,2,0,0,2,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,2,0,0,2,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,5,5,0,0,5,5,0,0,0,0,0,0,0,0],
+  ],
+  run1: [
+    [0,1,1,1,0,0,0],
+    [1,1,2,1,1,0,0],
+    [1,3,3,3,1,0,0],
+    [0,3,6,3,0,0,0],
+    [0,0,3,0,0,0,0],
+    [0,2,2,2,2,0,0],
+    [0,2,2,2,2,4,0],
+    [2,2,7,7,2,0,0],
+    [2,0,2,0,0,0,0],
+    [0,0,0,2,0,0,0],
+    [0,5,5,0,2,0,0],
+    [0,0,0,0,5,5,0],
+  ],
+  run2: [
+    [0,1,1,1,0,0,0],
+    [1,1,2,1,1,0,0],
+    [1,3,3,3,1,0,0],
+    [0,3,6,3,0,0,0],
+    [0,0,3,0,0,0,0],
+    [0,2,2,2,2,0,0],
+    [4,2,2,2,2,0,0],
+    [0,2,7,7,2,2,0],
+    [0,0,2,0,0,2,0],
+    [0,2,0,0,0,0,0],
+    [2,5,0,0,5,5,0],
+    [5,5,0,0,0,0,0],
+  ],
+  bow: [
+    [0,0,1,1,1,0,0,0],
+    [0,1,1,2,1,1,0,0],
+    [0,1,3,3,3,1,0,0],
+    [0,0,3,6,3,0,0,0],
+    [0,2,2,3,2,2,0,0],
+    [2,2,2,2,2,2,2,0],
+    [0,2,7,7,7,2,0,0],
+    [0,0,2,2,2,0,0,0],
+    [0,2,2,0,0,0,0,0],
+    [2,5,0,0,0,0,0,0],
+    [5,5,0,0,5,5,0,0],
+  ],
+};
+
+function spriteW(name) { return (SPR[name][0] || []).length; }
+function spriteH(name) { return SPR[name].length; }
+
+function drawSprite(name, cx, floorY, flipX) {
+  const rows = SPR[name];
+  const sw = spriteW(name), sh = spriteH(name);
+  const ox = cx - (sw * PS) / 2;
+  const oy = floorY - sh * PS;
+  ctx.save();
+  if (flipX) { ctx.translate(cx * 2, 0); ctx.scale(-1, 1); }
+  rows.forEach((row, ry) => {
+    row.forEach((px, rx) => {
+      if (!px) return;
+      ctx.fillStyle = PAL[px];
+      ctx.fillRect(Math.round(ox + rx * PS), Math.round(oy + ry * PS), PS, PS);
+    });
+  });
+  ctx.restore();
+}
+
+// ─── SCENE ────────────────────────────────────────────────────────────────────
+function drawTemple(x, y, tw, th) {
+  ctx.fillStyle = '#ffffff';
+  const stepH = Math.round(th * 0.1);
+  for (let s = 0; s < 3; s++) {
+    const sx  = x + s * Math.round(tw * 0.05);
+    const sw2 = tw - s * Math.round(tw * 0.1);
+    ctx.fillRect(sx, y + th - (s + 1) * stepH, sw2, stepH);
+  }
+  const bodyY = y + Math.round(th * 0.28);
+  const bodyH = th - Math.round(th * 0.28) - stepH * 3;
+  const bodyX = x + Math.round(tw * 0.06);
+  const bodyW = tw - Math.round(tw * 0.12);
+  const nCols = 4;
+  const colW  = Math.round(bodyW * 0.12);
+  const colGap = (bodyW - nCols * colW) / (nCols - 1);
+  for (let c = 0; c < nCols; c++) {
+    ctx.fillRect(bodyX + c * (colW + colGap), bodyY, colW, bodyH);
+  }
+  const entH = Math.round(th * 0.09);
+  ctx.fillRect(bodyX, bodyY - entH, bodyW, entH);
+  ctx.beginPath();
+  ctx.moveTo(x, bodyY - entH);
+  ctx.lineTo(x + tw / 2, y);
+  ctx.lineTo(x + tw, bodyY - entH);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawBackground() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  const tw = Math.round(Math.min(W, H) * 0.28);
+  const th = Math.round(tw * 0.85);
+  const mg = Math.round(tw * 0.06);
+  drawTemple(mg,       mg,         tw, th);
+  drawTemple(W-tw-mg, mg,         tw, th);
+  drawTemple(mg,       H-th-mg-38, tw, th);
+  drawTemple(W-tw-mg, H-th-mg-38, tw, th);
+}
+
+// ─── STAGE BOX ────────────────────────────────────────────────────────────────
+let boxOpacity = 0;
+
+function drawStageBox(boxCX, boxCY, boxSize) {
+  if (boxOpacity <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = boxOpacity;
+  const x = boxCX - boxSize / 2;
+  const y = boxCY - boxSize / 2;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(x, y, boxSize, boxSize);
+  ctx.strokeStyle = '#0000ff';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(x, y, boxSize, boxSize);
+  ctx.restore();
+}
+
+// ─── STATE MACHINE ────────────────────────────────────────────────────────────
+const ST = { IDLE:0, BOX_IN:1, CROUCH:2, RISE:3, HIPS:4, POINT:5, ARMSUP:6, HUGE:7, RUN:8, BOW:9, SINK:10, BOX_OUT:11 };
+let state = ST.IDLE, stateTimer = 0, performing = false;
+let runX = 0, runDir = 1, runFrame = 0;
 let autoTimer = 0;
-const AUTO_INTERVAL = 45000; // 45 seconds
+const AUTO_MS = 50000;
 
+let lastTs = 0;
 function loop(ts) {
-  const dt = Math.min(ts - lastTime, 100);
-  lastTime = ts;
+  const dt = Math.min(ts - lastTs, 80);
+  lastTs = ts;
   autoTimer += dt;
-  if (autoTimer >= AUTO_INTERVAL && !isPerforming) {
-    autoTimer = 0;
-    trigger();
-  }
-  if (isPerforming) {
-    animT = Math.min(animT + dt / 300, 1);
-    if (elvisState === STATE.DANCING) {
-      danceFrame = Math.floor(Date.now() / 120) % 6;
-    }
-  }
-  draw();
+  if (autoTimer >= AUTO_MS && !performing) { autoTimer = 0; trigger(); }
+  update(dt);
+  render();
   requestAnimationFrame(loop);
 }
 
-// --- Trigger performance ---
-async function trigger() {
-  if (isPerforming) return;
-  isPerforming = true;
+function update(dt) {
+  stateTimer += dt;
+  switch (state) {
+    case ST.BOX_IN:
+      boxOpacity = Math.min(1, stateTimer / 250);
+      if (stateTimer > 350) next(ST.CROUCH);
+      break;
+    case ST.CROUCH:
+      if (stateTimer > 400) next(ST.RISE);
+      break;
+    case ST.RISE:
+      if (stateTimer > 350) next(ST.HIPS);
+      break;
+    case ST.HIPS:
+      if (stateTimer > 700) {
+        const idxA = Math.floor(Math.random() * bufsA.length) || 0;
+        const lineA = LINES_A[idxA] || LINES_A[0];
+        showCaption(lineA);
+        playBuf(bufsA[idxA]).then(() => { if (state === ST.POINT) next(ST.ARMSUP); });
+        next(ST.POINT);
+      }
+      break;
+    case ST.POINT:
+      if (stateTimer > 4000) next(ST.ARMSUP);
+      break;
+    case ST.ARMSUP:
+      if (stateTimer > 300) {
+        const idxB = Math.floor(Math.random() * bufsB.length) || 0;
+        const lineB = LINES_B[idxB] || LINES_B[0];
+        showCaption(lineB);
+        playBuf(bufsB[idxB]).then(() => { if (state === ST.HUGE) next(ST.RUN); });
+        next(ST.HUGE);
+      }
+      break;
+    case ST.HUGE:
+      if (stateTimer > 4000) next(ST.RUN);
+      break;
+    case ST.RUN:
+      hideCaption();
+      runX += runDir * dt * 0.12;
+      runFrame = Math.floor(stateTimer / 130) % 2;
+      if (runX > 1) { runX = 1; runDir = -1; }
+      if (runX < 0) { runX = 0; runDir =  1; }
+      if (stateTimer > 2200) next(ST.BOW);
+      break;
+    case ST.BOW:
+      if (stateTimer > 600) next(ST.SINK);
+      break;
+    case ST.SINK:
+      if (stateTimer > 400) next(ST.BOX_OUT);
+      break;
+    case ST.BOX_OUT:
+      boxOpacity = Math.max(0, 1 - stateTimer / 300);
+      if (stateTimer > 400) { boxOpacity = 0; performing = false; state = ST.IDLE; }
+      break;
+  }
+}
+
+function next(s) { state = s; stateTimer = 0; }
+
+function render() {
+  drawBackground();
+  if (state === ST.IDLE) return;
+  const boxSize = Math.round(Math.min(W * 0.56, H * 0.38, 220));
+  const boxCX   = Math.round(W / 2);
+  const boxCY   = Math.round(H * 0.46);
+  const floor   = boxCY + Math.round(boxSize * 0.46);
+  drawStageBox(boxCX, boxCY, boxSize);
+  if (boxOpacity <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = boxOpacity;
+  ctx.beginPath();
+  ctx.rect(boxCX - boxSize/2 + 4, boxCY - boxSize/2 + 4, boxSize - 8, boxSize - 8);
+  ctx.clip();
+  switch (state) {
+    case ST.BOX_IN: case ST.CROUCH: drawSprite('crouch', boxCX, floor); break;
+    case ST.RISE:                   drawSprite('stand',  boxCX, floor); break;
+    case ST.HIPS:                   drawSprite('hips',   boxCX, floor); break;
+    case ST.POINT:                  drawSprite('point',  boxCX, floor); break;
+    case ST.ARMSUP:                 drawSprite('armsup', boxCX, floor); break;
+    case ST.HUGE:                   drawSprite('huge',   boxCX, floor); break;
+    case ST.RUN: {
+      const range = boxSize * 0.55;
+      const ex = boxCX + Math.round((runX - 0.5) * range);
+      drawSprite(runFrame === 0 ? 'run1' : 'run2', ex, floor, runDir < 0);
+      break;
+    }
+    case ST.BOW:  drawSprite('bow',    boxCX, floor); break;
+    case ST.SINK: case ST.BOX_OUT: drawSprite('crouch', boxCX, floor); break;
+  }
+  ctx.restore();
+}
+
+function trigger() {
+  if (performing) return;
+  performing = true; autoTimer = 0;
   hintEl.style.display = 'none';
   initAudio();
-  autoTimer = 0;
-
-  const idxA = Math.floor(Math.random() * 6);
-  const idxB = Math.floor(Math.random() * 3);
-  const bufA = audioBuffers.A[idxA];
-  const bufB = audioBuffers.B[idxB];
-  const lineA = LINES_A[idxA];
-  const lineB = LINES_B[idxB];
-
-  // RISING
-  elvisState = STATE.RISING;
-  animT = 0;
-  await sleep(400);
-
-  // SPEAKING A
-  elvisState = STATE.SPEAKING_A;
-  animT = 0;
-  showCaption(lineA);
-  await playBuffer(bufA);
-  await sleep(100);
-
-  // GESTURING (arms spread)
-  elvisState = STATE.GESTURING;
-  animT = 0;
-  await sleep(300);
-
-  // SPEAKING B
-  elvisState = STATE.SPEAKING_B;
-  animT = 0;
-  showCaption(lineB);
-  await playBuffer(bufB);
-  await sleep(100);
-
-  // DANCING
-  elvisState = STATE.DANCING;
-  animT = 0;
-  hideCaption();
-  await sleep(1800);
-
-  // SITTING
-  elvisState = STATE.SITTING;
-  animT = 0;
-  await sleep(500);
-
-  elvisState = STATE.IDLE;
-  isPerforming = false;
+  runX = 0; runDir = 1; boxOpacity = 0;
+  next(ST.BOX_IN);
 }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function showCaption(t) { captionEl.textContent = t; captionEl.classList.add('visible'); }
+function hideCaption()  { captionEl.classList.remove('visible'); }
 
-function showCaption(text) {
-  captionEl.textContent = text;
-  captionEl.classList.add('visible');
-}
-function hideCaption() {
-  captionEl.classList.remove('visible');
-}
+function onTap(e) { e.preventDefault(); initAudio(); if (!performing) trigger(); }
+canvas.addEventListener('touchstart', onTap, { passive: false });
+canvas.addEventListener('click', onTap);
 
-// --- Drawing ---
-function draw() {
-  const W = canvas.width, H = canvas.height;
-  drawDesktop(W, H);
-  drawElvisScene(W, H);
-}
-
-// === WINDOWS 3.1 DESKTOP ===
-function drawDesktop(W, H) {
-  ctx.fillStyle = '#008080';
-  ctx.fillRect(0, 0, W, H);
-
-  // Title bar at top
-  ctx.fillStyle = '#c0c0c0';
-  ctx.fillRect(0, 0, W, 26);
-  ctx.fillStyle = '#000080';
-  ctx.fillRect(0, 0, W, 20);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 11px "Courier New"';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('Program Manager', W / 2, 10);
-
-  // Win3.1 control boxes (top right)
-  const bx = W - 42, by = 2, bw = 16, bh = 16;
-  drawWin31Button(bx, by, bw, bh, '▼');
-  drawWin31Button(bx + 20, by, bw, bh, '▲');
-
-  // System menu box (top left)
-  ctx.fillStyle = '#c0c0c0';
-  ctx.fillRect(4, 2, 16, 16);
-  ctx.strokeStyle = '#000';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(4, 2, 16, 16);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(6, 9, 12, 3);
-
-  // Main window body
-  const wx = 6, wy = 24, ww = W - 12, wh = H - 120;
-  drawWindow(wx, wy, ww, wh, '');
-
-  // Program groups inside
-  drawGroupBox(wx + 10, wy + 10, ww - 20, 80, 'Main');
-  drawGroupBox(wx + 10, wy + 100, ww - 20, 80, 'Accessories');
-
-  // Icons in Main group
-  const iconY = wy + 32;
-  const spacing = Math.floor((ww - 30) / 5);
-  drawWin31Icon(wx + 18, iconY, 'filemanager', 'File\nManager');
-  drawWin31Icon(wx + 18 + spacing, iconY, 'controlpanel', 'Control\nPanel');
-  drawWin31Icon(wx + 18 + spacing * 2, iconY, 'printmanager', 'Print\nManager');
-  drawWin31Icon(wx + 18 + spacing * 3, iconY, 'msdos', 'MS-DOS\nPrompt');
-  drawWin31Icon(wx + 18 + spacing * 4, iconY, 'clipboard', 'Clipboard\nViewer');
-
-  // Icons in Accessories
-  const iconY2 = wy + 122;
-  drawWin31Icon(wx + 18, iconY2, 'notepad', 'Notepad');
-  drawWin31Icon(wx + 18 + spacing, iconY2, 'calculator', 'Calculator');
-  drawWin31Icon(wx + 18 + spacing * 2, iconY2, 'paint', 'Paintbrush');
-  drawWin31Icon(wx + 18 + spacing * 3, iconY2, 'clock', 'Clock');
-  drawWin31Icon(wx + 18 + spacing * 4, iconY2, 'write', 'Write');
-
-  // Scrollbar on the right
-  drawScrollbar(wx + ww - 16, wy + 1, 15, wh - 2);
-
-  // Status bar below main window
-  const sbY = wy + wh;
-  ctx.fillStyle = '#c0c0c0';
-  ctx.fillRect(wx, sbY, ww, 18);
-  drawInset(wx, sbY, ww, 18);
-  ctx.fillStyle = '#000';
-  ctx.font = '10px "Courier New"';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('  2 Group(s)', wx + 4, sbY + 9);
-}
-
-function drawWindow(x, y, w, h, title) {
-  ctx.fillStyle = '#c0c0c0';
-  ctx.fillRect(x, y, w, h);
-  // 3D border
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x, y); ctx.lineTo(x + w, y); ctx.stroke();
-  ctx.strokeStyle = '#808080';
-  ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h); ctx.stroke();
-  ctx.strokeStyle = '#000';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, w, h);
-}
-
-function drawGroupBox(x, y, w, h, title) {
-  ctx.strokeStyle = '#808080';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x, y + 6, w, h - 6);
-  ctx.fillStyle = '#c0c0c0';
-  ctx.fillRect(x + 8, y, title.length * 6 + 4, 12);
-  ctx.fillStyle = '#000';
-  ctx.font = '10px "Courier New"';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(title, x + 10, y);
-}
-
-function drawInset(x, y, w, h) {
-  ctx.strokeStyle = '#808080';
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x, y); ctx.lineTo(x, y + h); ctx.stroke();
-  ctx.strokeStyle = '#fff';
-  ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y); ctx.stroke();
-}
-
-function drawWin31Button(x, y, w, h, label) {
-  ctx.fillStyle = '#c0c0c0';
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(x, y + h - 1); ctx.lineTo(x, y); ctx.lineTo(x + w - 1, y); ctx.stroke();
-  ctx.strokeStyle = '#000';
-  ctx.beginPath(); ctx.moveTo(x + w - 1, y); ctx.lineTo(x + w - 1, y + h - 1); ctx.lineTo(x, y + h - 1); ctx.stroke();
-  ctx.fillStyle = '#000';
-  ctx.font = '8px "Courier New"';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, x + w / 2, y + h / 2);
-}
-
-function drawScrollbar(x, y, w, h) {
-  ctx.fillStyle = '#c0c0c0';
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = '#808080'; ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, w, h);
-  // Up arrow
-  drawWin31Button(x, y, w, 16, '▲');
-  // Down arrow
-  drawWin31Button(x, y + h - 16, w, 16, '▼');
-  // Thumb
-  ctx.fillStyle = '#c0c0c0';
-  ctx.fillRect(x + 1, y + 18, w - 2, 20);
-  drawInset(x + 1, y + 18, w - 2, 20);
-}
-
-// === PIXEL ART ICONS ===
-function drawWin31Icon(x, y, type, label) {
-  ctx.save();
-  ctx.translate(x, y);
-  const s = 2; // pixel scale
-
-  const icons = {
-    filemanager: [
-      [0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0],
-      [0,1,2,2,2,2,1,0,0,0,0,0,0,0,0,0],
-      [1,2,2,2,2,2,2,1,1,1,1,1,1,1,0,0],
-      [1,2,2,2,2,2,2,2,2,2,2,2,2,2,1,0],
-      [1,2,2,2,3,3,3,3,3,3,3,3,2,2,2,1],
-      [1,2,2,2,3,3,3,3,3,3,3,3,2,2,2,1],
-      [1,2,2,2,3,3,3,3,3,3,3,3,2,2,2,1],
-      [1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1],
-      [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
-    ],
-    notepad: [
-      [0,1,1,1,1,1,1,1,1,1,0,0],
-      [1,2,2,2,2,2,2,2,2,2,1,0],
-      [1,2,3,3,3,3,3,3,3,2,2,1],
-      [1,2,3,3,3,3,3,3,3,2,2,1],
-      [1,2,3,3,3,3,3,3,3,2,2,1],
-      [1,2,3,3,3,3,3,3,3,2,2,1],
-      [1,2,3,3,3,3,3,3,3,2,2,1],
-      [1,2,2,2,2,2,2,2,2,2,2,1],
-      [0,1,1,1,1,1,1,1,1,1,1,0],
-    ],
-    calculator: [
-      [0,1,1,1,1,1,1,1,1,0],
-      [1,4,4,4,4,4,4,4,4,1],
-      [1,4,5,5,5,5,5,5,4,1],
-      [1,4,4,4,4,4,4,4,4,1],
-      [1,4,6,4,6,4,6,4,4,1],
-      [1,4,4,4,4,4,4,4,4,1],
-      [1,4,6,4,6,4,6,4,4,1],
-      [1,4,4,4,4,4,4,4,4,1],
-      [0,1,1,1,1,1,1,1,1,0],
-    ],
-    msdos: [
-      [1,1,1,1,1,1,1,1,1,1,1,1],
-      [1,0,0,0,0,0,0,0,0,0,0,1],
-      [1,0,7,7,0,0,0,0,0,0,0,1],
-      [1,0,0,7,7,0,0,0,0,0,0,1],
-      [1,0,0,0,7,0,0,0,0,0,0,1],
-      [1,0,0,7,7,0,0,0,0,0,0,1],
-      [1,0,7,7,0,0,0,0,0,0,0,1],
-      [1,0,0,0,0,0,0,0,0,0,0,1],
-      [1,1,1,1,1,1,1,1,1,1,1,1],
-    ],
-    controlpanel: [
-      [0,0,1,1,1,1,1,1,1,1,0,0],
-      [0,1,8,8,8,8,8,8,8,8,1,0],
-      [1,8,8,8,8,8,8,8,8,8,8,1],
-      [1,8,9,9,9,9,9,9,9,9,8,1],
-      [1,8,9,1,1,1,1,1,1,9,8,1],
-      [1,8,9,1,9,9,9,1,9,9,8,1],
-      [1,8,9,9,9,9,9,9,9,9,8,1],
-      [0,1,8,8,8,8,8,8,8,8,1,0],
-      [0,0,1,1,1,1,1,1,1,1,0,0],
-    ],
-    printmanager: [
-      [0,0,1,1,1,1,1,1,1,0,0],
-      [0,1,2,2,2,2,2,2,2,1,0],
-      [1,1,1,1,1,1,1,1,1,1,1],
-      [1,2,2,2,2,2,2,2,2,2,1],
-      [1,2,2,2,2,2,2,2,2,2,1],
-      [1,2,2,2,2,2,2,2,2,2,1],
-      [1,1,1,1,1,1,1,1,1,1,1],
-      [0,1,2,2,2,2,2,2,2,1,0],
-      [0,0,1,1,1,1,1,1,1,0,0],
-    ],
-    clipboard: [
-      [0,1,1,0,0,1,1,0],
-      [1,2,2,1,1,2,2,1],
-      [1,2,2,1,1,2,2,1],
-      [0,1,1,3,3,1,1,0],
-      [0,0,1,3,3,1,0,0],
-      [0,0,1,3,3,1,0,0],
-      [0,0,1,3,3,1,0,0],
-      [0,0,1,3,3,1,0,0],
-      [0,0,1,1,1,1,0,0],
-    ],
-    paint: [
-      [0,0,0,1,1,1,0,0,0,0],
-      [0,0,1,6,6,6,1,0,0,0],
-      [0,1,6,6,1,1,6,1,0,0],
-      [1,6,1,0,0,1,1,6,1,0],
-      [1,6,1,0,0,1,6,6,1,0],
-      [0,1,6,6,6,6,1,0,0,0],
-      [0,0,1,1,1,1,0,0,0,0],
-      [0,0,0,0,0,0,0,0,0,0],
-      [0,0,0,0,0,0,0,0,0,0],
-    ],
-    clock: [
-      [0,0,1,1,1,1,1,1,0,0],
-      [0,1,2,2,2,2,2,2,1,0],
-      [1,2,2,2,1,2,2,2,2,1],
-      [1,2,2,2,1,2,2,2,2,1],
-      [1,2,1,1,1,2,2,2,2,1],
-      [1,2,2,2,2,2,2,2,2,1],
-      [1,2,2,2,2,2,2,2,2,1],
-      [0,1,2,2,2,2,2,2,1,0],
-      [0,0,1,1,1,1,1,1,0,0],
-    ],
-    write: [
-      [0,1,1,1,1,1,1,1,1,1,0],
-      [1,2,2,2,2,2,2,2,2,2,1],
-      [1,2,1,1,1,1,1,2,2,2,1],
-      [1,2,1,1,1,1,1,2,2,2,1],
-      [1,2,2,2,2,2,2,2,2,2,1],
-      [1,2,1,1,2,2,2,2,2,2,1],
-      [1,2,1,1,2,2,2,2,2,2,1],
-      [1,2,2,2,2,2,2,2,2,2,1],
-      [0,1,1,1,1,1,1,1,1,1,0],
-    ],
-  };
-
-  const palette = {
-    0: null,
-    1: '#000000',
-    2: '#ffffff',
-    3: '#c0c0c0',
-    4: '#808080',
-    5: '#00ffff',
-    6: '#0000ff',
-    7: '#00ff00',
-    8: '#c0c0c0',
-    9: '#ffffff',
-  };
-
-  const grid = icons[type] || icons.notepad;
-  grid.forEach((row, ry) => {
-    row.forEach((px, rx) => {
-      const color = palette[px];
-      if (color) {
-        ctx.fillStyle = color;
-        ctx.fillRect(rx * s, ry * s, s, s);
-      }
-    });
-  });
-
-  // Label (split on \n)
-  ctx.fillStyle = '#000';
-  ctx.font = '8px "Courier New"';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  const lines = (label || '').split('\n');
-  const iconH = grid.length * s;
-  lines.forEach((ln, i) => {
-    ctx.fillText(ln, (grid[0].length * s) / 2, iconH + 2 + i * 9);
-  });
-
-  ctx.restore();
-}
-
-// === ELVIS DRAWING ===
-// Elvis stands ~120px tall, ~70px wide. Origin = bottom-center of feet.
-function drawElvis(cx, cy, pose, frame, risingT) {
-  ctx.save();
-  ctx.translate(cx, cy);
-
-  const skin = '#f5c58a';
-  const hair = '#1a1a1a';
-  const white = '#f8f8f8';
-  const gold = '#d4a017';
-  const blue = '#1a1acd';
-  const shade = '#d0d0d0';
-  const darkWhite = '#e0e0e0';
-  const glassLens = '#222';
-
-  if (pose === STATE.IDLE || (pose === STATE.SITTING && risingT < 0.5)) {
-    // RECLINING: Elvis lying at an angle on the window title bar
-    ctx.rotate(-Math.PI / 5);
-    ctx.translate(-30, 10);
-
-    // Body (lying)
-    ctx.fillStyle = white;
-    ctx.beginPath();
-    ctx.roundRect(-22, -18, 44, 28, 4);
-    ctx.fill();
-    // Gold trim
-    ctx.fillStyle = gold;
-    ctx.fillRect(-22, -18, 44, 5); // collar band
-    ctx.fillRect(-22, 4, 44, 4);  // belt
-
-    // Legs
-    ctx.fillStyle = white;
-    ctx.fillRect(-18, 10, 14, 36);
-    ctx.fillRect(4, 10, 14, 36);
-    // Shoes
-    ctx.fillStyle = blue;
-    ctx.beginPath(); ctx.roundRect(-22, 42, 20, 10, 3); ctx.fill();
-    ctx.beginPath(); ctx.roundRect(2, 42, 20, 10, 3); ctx.fill();
-
-    // Arms (folded behind head)
-    ctx.fillStyle = skin;
-    ctx.beginPath(); ctx.ellipse(-28, -8, 10, 6, -0.5, 0, Math.PI * 2); ctx.fill();
-
-    // Head
-    ctx.fillStyle = skin;
-    ctx.beginPath(); ctx.ellipse(-34, -22, 14, 18, 0, 0, Math.PI * 2); ctx.fill();
-    // Pompadour
-    ctx.fillStyle = hair;
-    ctx.beginPath();
-    ctx.moveTo(-46, -30);
-    ctx.bezierCurveTo(-50, -52, -22, -56, -20, -36);
-    ctx.bezierCurveTo(-24, -28, -42, -22, -46, -30);
-    ctx.fill();
-    // Sideburn
-    ctx.fillStyle = hair;
-    ctx.fillRect(-47, -30, 4, 10);
-    // Sunglasses
-    ctx.fillStyle = glassLens;
-    ctx.beginPath(); ctx.ellipse(-38, -22, 5, 4, 0.2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(-28, -24, 5, 4, -0.2, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = gold; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(-33, -22); ctx.lineTo(-31, -23); ctx.stroke();
-
-  } else if (pose === STATE.RISING || (pose === STATE.SITTING && risingT >= 0.5)) {
-    // Transition: rising from lying to standing
-    const t = pose === STATE.RISING ? risingT : 1 - (risingT - 0.5) * 2;
-    const angle = -Math.PI / 5 * (1 - t);
-    ctx.rotate(angle);
-    const tx = -30 * (1 - t);
-    const ty = 10 * (1 - t);
-    ctx.translate(tx, ty);
-    drawElvisStanding(ctx, skin, hair, white, gold, blue, glassLens, 'stand', 0, t);
-
-  } else if (pose === STATE.SPEAKING_A) {
-    // Standing, one arm out pointing
-    drawElvisStanding(ctx, skin, hair, white, gold, blue, glassLens, 'point', frame, 1);
-
-  } else if (pose === STATE.GESTURING || pose === STATE.SPEAKING_B) {
-    // Arms wide spread: "HUUUGE!"
-    drawElvisStanding(ctx, skin, hair, white, gold, blue, glassLens, 'huge', frame, 1);
-
-  } else if (pose === STATE.DANCING) {
-    // Hip-shaking dance
-    const hipShift = Math.sin(Date.now() / 100) * 8;
-    const armAngle = Math.sin(Date.now() / 150) * 0.6;
-    ctx.translate(hipShift * 0.3, 0);
-    drawElvisDance(ctx, skin, hair, white, gold, blue, glassLens, hipShift, armAngle);
-
-  } else {
-    drawElvisStanding(ctx, skin, hair, white, gold, blue, glassLens, 'stand', 0, 1);
-  }
-
-  ctx.restore();
-}
-
-function drawElvisStanding(ctx, skin, hair, white, gold, blue, glassLens, pose, frame, t) {
-  const scale = 0.8 + t * 0.2;
-  ctx.scale(scale, scale);
-
-  // === SHOES ===
-  ctx.fillStyle = blue;
-  ctx.beginPath(); ctx.roundRect(-26, -14, 22, 14, 4); ctx.fill();
-  ctx.beginPath(); ctx.roundRect(4, -14, 22, 14, 4); ctx.fill();
-
-  // === LEGS ===
-  ctx.fillStyle = white;
-  ctx.fillRect(-20, -58, 16, 46);
-  ctx.fillRect(4, -58, 16, 46);
-
-  // === BODY ===
-  ctx.fillStyle = white;
-  ctx.beginPath();
-  ctx.moveTo(-24, -58);
-  ctx.lineTo(24, -58);
-  ctx.lineTo(20, -100);
-  ctx.lineTo(-20, -100);
-  ctx.closePath();
-  ctx.fill();
-
-  // Belt
-  ctx.fillStyle = gold;
-  ctx.fillRect(-22, -64, 44, 7);
-  // Belt buckle
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(-8, -65, 16, 9);
-  ctx.strokeStyle = gold; ctx.lineWidth = 1;
-  ctx.strokeRect(-8, -65, 16, 9);
-
-  // Collar
-  ctx.fillStyle = gold;
-  ctx.beginPath();
-  ctx.moveTo(-18, -100);
-  ctx.lineTo(0, -86);
-  ctx.lineTo(18, -100);
-  ctx.closePath();
-  ctx.fill();
-  // Collar gems
-  ctx.fillStyle = '#00f';
-  for (let i = 0; i < 5; i++) {
-    ctx.beginPath(); ctx.arc(-8 + i * 4, -96, 1.5, 0, Math.PI * 2); ctx.fill();
-  }
-
-  // Jumpsuit side stripes
-  ctx.fillStyle = gold;
-  ctx.fillRect(-25, -96, 4, 32);
-  ctx.fillRect(21, -96, 4, 32);
-
-  // === ARMS ===
-  if (pose === 'stand') {
-    // Arms at sides
-    ctx.fillStyle = skin;
-    ctx.save(); ctx.translate(-24, -90);
-    ctx.rotate(0.15);
-    ctx.fillRect(-6, 0, 12, 34); ctx.restore();
-    ctx.save(); ctx.translate(24, -90);
-    ctx.rotate(-0.15);
-    ctx.fillRect(-6, 0, 12, 34); ctx.restore();
-    // Hands
-    ctx.fillStyle = skin;
-    ctx.beginPath(); ctx.ellipse(-26, -56, 7, 9, 0.15, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(26, -56, 7, 9, -0.15, 0, Math.PI * 2); ctx.fill();
-
-  } else if (pose === 'point') {
-    // Right arm points forward/up (right = stage right = viewer's left on portrait)
-    ctx.fillStyle = skin;
-    // Left arm down
-    ctx.save(); ctx.translate(-24, -90);
-    ctx.rotate(0.15);
-    ctx.fillRect(-6, 0, 12, 34); ctx.restore();
-    ctx.fillStyle = skin;
-    ctx.beginPath(); ctx.ellipse(-26, -56, 7, 9, 0.15, 0, Math.PI * 2); ctx.fill();
-
-    // Right arm raised pointing
-    ctx.fillStyle = white;
-    ctx.save(); ctx.translate(24, -96);
-    ctx.rotate(-1.1);
-    ctx.fillRect(-5, 0, 10, 36);
-    ctx.restore();
-    // Pointing hand
-    ctx.fillStyle = skin;
-    ctx.save(); ctx.translate(56, -126);
-    ctx.beginPath(); ctx.ellipse(0, 0, 8, 7, -1.1, 0, Math.PI * 2); ctx.fill();
-    // Pointing finger
-    ctx.fillRect(-2, -12, 5, 14);
-    ctx.restore();
-
-  } else if (pose === 'huge') {
-    // Both arms spread wide
-    ctx.fillStyle = white;
-    // Left arm
-    ctx.save(); ctx.translate(-24, -96);
-    ctx.rotate(1.2);
-    ctx.fillRect(-5, 0, 10, 38);
-    ctx.restore();
-    // Right arm
-    ctx.save(); ctx.translate(24, -96);
-    ctx.rotate(-1.2);
-    ctx.fillRect(-5, 0, 10, 38);
-    ctx.restore();
-    // Hands
-    ctx.fillStyle = skin;
-    ctx.beginPath(); ctx.ellipse(-56, -90, 9, 8, 1.2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(56, -90, 9, 8, -1.2, 0, Math.PI * 2); ctx.fill();
-  }
-
-  // === HEAD ===
-  ctx.fillStyle = skin;
-  ctx.beginPath(); ctx.ellipse(0, -116, 18, 20, 0, 0, Math.PI * 2); ctx.fill();
-
-  // Sideburns
-  ctx.fillStyle = hair;
-  ctx.fillRect(-17, -122, 5, 14);
-  ctx.fillRect(12, -122, 5, 14);
-
-  // Pompadour
-  ctx.fillStyle = hair;
-  ctx.beginPath();
-  ctx.moveTo(-18, -128);
-  ctx.bezierCurveTo(-22, -155, 22, -155, 18, -128);
-  ctx.bezierCurveTo(12, -118, -12, -118, -18, -128);
-  ctx.fill();
-  // Pompadour highlight
-  ctx.fillStyle = '#333';
-  ctx.beginPath();
-  ctx.moveTo(-6, -148);
-  ctx.bezierCurveTo(-4, -155, 6, -155, 8, -148);
-  ctx.bezierCurveTo(6, -143, -4, -143, -6, -148);
-  ctx.fill();
-
-  // Sunglasses
-  ctx.fillStyle = glassLens;
-  ctx.beginPath(); ctx.ellipse(-8, -115, 7, 5, -0.1, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(8, -115, 7, 5, 0.1, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = gold; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(-1, -115); ctx.lineTo(1, -115); ctx.stroke();
-  // Frame
-  ctx.strokeStyle = gold; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.ellipse(-8, -115, 7, 5, -0.1, 0, Math.PI * 2); ctx.stroke();
-  ctx.beginPath(); ctx.ellipse(8, -115, 7, 5, 0.1, 0, Math.PI * 2); ctx.stroke();
-  // Temple arms
-  ctx.beginPath(); ctx.moveTo(-15, -115); ctx.lineTo(-20, -113); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(15, -115); ctx.lineTo(20, -113); ctx.stroke();
-
-  // Mouth / lip curl
-  ctx.fillStyle = '#c06060';
-  ctx.beginPath(); ctx.ellipse(3, -107, 5, 3, 0.1, 0, Math.PI); ctx.fill();
-}
-
-function drawElvisDance(ctx, skin, hair, white, gold, blue, glassLens, hipShift, armAngle) {
-  // Hip shift version of standing
-  ctx.translate(hipShift, 0);
-  drawElvisStanding(ctx, skin, hair, white, gold, blue, glassLens, 'stand', 0, 1);
-  ctx.translate(-hipShift, 0);
-
-  // Override arms with dance arms
-  ctx.fillStyle = white;
-  ctx.save(); ctx.translate(-24, -90 * 0.8);
-  ctx.rotate(armAngle + 0.3);
-  ctx.fillRect(-5, 0, 10, 30); ctx.restore();
-  ctx.save(); ctx.translate(24, -90 * 0.8);
-  ctx.rotate(-armAngle - 0.3);
-  ctx.fillRect(-5, 0, 10, 30); ctx.restore();
-}
-
-// === DRAW ELVIS SCENE (positioned at bottom of screen) ===
-function drawElvisScene(W, H) {
-  const elvisCX = W / 2;
-  // Elvis bottom of feet sits at about 80px from bottom (above caption bar)
-  const elvisCY = H - 80;
-
-  // Shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.beginPath();
-  ctx.ellipse(elvisCX, elvisCY + 4, 40, 8, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Elvis title bar he's resting on (when idle)
-  if (elvisState === STATE.IDLE) {
-    const barW = 200, barH = 20;
-    const barX = elvisCX - barW / 2;
-    const barY = elvisCY - barH + 10;
-    ctx.fillStyle = '#000080';
-    ctx.fillRect(barX, barY, barW, barH);
-    ctx.fillStyle = '#fff';
-    ctx.font = '10px "Courier New"';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('TINY ELVIS.EXE', elvisCX, barY + 10);
-    ctx.strokeStyle = '#808080'; ctx.lineWidth = 1;
-    ctx.strokeRect(barX, barY, barW, barH);
-  }
-
-  const risingT = animT;
-  drawElvis(elvisCX, elvisCY, elvisState, danceFrame, risingT);
-
-  // Stars/sparkles during dance
-  if (elvisState === STATE.DANCING) {
-    const t = Date.now() / 200;
-    for (let i = 0; i < 6; i++) {
-      const angle = (t + i * 1.05) % (Math.PI * 2);
-      const r = 60 + Math.sin(t * 2 + i) * 15;
-      const sx = elvisCX + Math.cos(angle) * r;
-      const sy = elvisCY - 80 + Math.sin(angle) * r;
-      const sz = 2 + Math.sin(t * 3 + i) * 1.5;
-      ctx.fillStyle = `hsl(${(t * 60 + i * 50) % 360}, 100%, 70%)`;
-      ctx.beginPath(); ctx.arc(sx, sy, sz, 0, Math.PI * 2); ctx.fill();
-    }
-  }
-}
-
-// === INPUT HANDLING ===
-function handleTap(e) {
-  e.preventDefault();
-  initAudio();
-  if (!isPerforming) trigger();
-}
-canvas.addEventListener('touchstart', handleTap, { passive: false });
-canvas.addEventListener('click', handleTap);
-
-// Init
-resize();
-requestAnimationFrame((ts) => { lastTime = ts; loop(ts); });
+requestAnimationFrame(ts => { lastTs = ts; loop(ts); });
 </script>
 </body>
 </html>
