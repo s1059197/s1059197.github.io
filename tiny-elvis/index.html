@@ -8,463 +8,560 @@
 <title>Tiny Elvis for Windows</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body {
-    width: 100%; height: 100%;
-    overflow: hidden;
-    background: #000;
-    touch-action: none;
-    -webkit-user-select: none;
-    user-select: none;
-  }
-  #stage {
-    display: block;
-    width: 100%;
-    height: 100%;
-    image-rendering: pixelated;
-    image-rendering: crisp-edges;
-  }
+  html, body { width:100%; height:100%; overflow:hidden; background:#000;
+    touch-action:none; -webkit-user-select:none; user-select:none; }
+  #stage { display:block; width:100%; height:100%; }
   #caption {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    background: #000080;
-    color: #fff;
-    font-family: 'Courier New', monospace;
-    font-size: 13px;
-    text-align: center;
-    padding: 7px 14px;
-    min-height: 38px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-top: 2px solid #fff;
-    opacity: 0;
-    transition: opacity 0.15s;
-    pointer-events: none;
-    z-index: 10;
+    position:fixed; bottom:0; left:0; right:0;
+    background:#000080; color:#fff;
+    font-family:'Courier New',monospace; font-size:13px;
+    text-align:center; padding:7px 14px; min-height:36px;
+    display:flex; align-items:center; justify-content:center;
+    border-top:2px solid #fff;
+    opacity:0; transition:opacity 0.15s;
+    pointer-events:none; z-index:10;
   }
-  #caption.visible { opacity: 1; }
-  #tap-hint {
-    position: fixed;
-    bottom: 46px;
-    left: 50%;
-    transform: translateX(-50%);
-    color: #ffff00;
-    font-size: 11px;
-    font-family: 'Courier New', monospace;
-    background: rgba(0,0,0,0.7);
-    padding: 4px 10px;
-    border: 1px solid #ffff00;
-    pointer-events: none;
-    animation: blink 1s step-end infinite;
-    white-space: nowrap;
-    z-index: 11;
+  #caption.on { opacity:1; }
+  #hint {
+    position:fixed; bottom:44px; left:50%; transform:translateX(-50%);
+    color:#ffff00; font-size:11px; font-family:'Courier New',monospace;
+    background:rgba(0,0,0,0.65); padding:4px 10px; border:1px solid #ffff00;
+    pointer-events:none; animation:blink 1s step-end infinite;
+    white-space:nowrap; z-index:11;
   }
-  @keyframes blink { 50% { opacity: 0; } }
+  @keyframes blink { 50%{opacity:0} }
 </style>
 </head>
 <body>
 <canvas id="stage"></canvas>
 <div id="caption"></div>
-<div id="tap-hint">[ TAP TO MAKE TINY ELVIS TALK ]</div>
-
+<div id="hint">[ TAP TO MAKE TINY ELVIS TALK ]</div>
 <script>
 'use strict';
 const canvas = document.getElementById('stage');
-const ctx    = canvas.getContext('2d');
-ctx.imageSmoothingEnabled = false;
+const ctx = canvas.getContext('2d');
+const capEl = document.getElementById('caption');
+const hintEl = document.getElementById('hint');
 
-const captionEl = document.getElementById('caption');
-const hintEl    = document.getElementById('tap-hint');
-
-// ─── RESIZE ───────────────────────────────────────────────────────────────────
-let W = 0, H = 0;
-function resize() {
-  W = canvas.width  = window.innerWidth;
-  H = canvas.height = window.innerHeight;
-}
+let W=0, H=0;
+function resize(){ W=canvas.width=window.innerWidth; H=canvas.height=window.innerHeight; }
 window.addEventListener('resize', resize);
 resize();
 
-// ─── AUDIO ────────────────────────────────────────────────────────────────────
-const LINES_A = [
-  "Look at that icon, man...",
-  "Would you look at that dialog box...",
-  "Check out that title bar...",
-  "Man, look at that mouse cursor...",
-  "Would ya look at that scroll bar...",
-  "Look at that program group, man..."
-];
-const LINES_B = [
-  "Man, it is HUGE.",
-  "That thing is HUGE, man.",
-  "It is GIGANTIC, man. HUGE."
-];
+// === AUDIO ===
+const LA=['Look at that icon, man...','Would you look at that dialog box...',
+  'Check out that title bar...','Man, look at that mouse cursor...',
+  'Would ya look at that scroll bar...','Look at that program group, man...'];
+const LB=['Man, it is HUGE.','That thing is HUGE, man.','It is GIGANTIC, man. HUGE.'];
 
-let audioCtx = null;
-const bufsA = [], bufsB = [];
-
-function initAudio() {
-  if (audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  [
-    ['A','audio/TWAV_A1.WAV'],['A','audio/TWAV_A2.WAV'],['A','audio/TWAV_A3.WAV'],
-    ['A','audio/TWAV_A4.WAV'],['A','audio/TWAV_A5.WAV'],['A','audio/TWAV_A6.WAV'],
-    ['B','audio/TWAV_B1.WAV'],['B','audio/TWAV_B2.WAV'],['B','audio/TWAV_B3.WAV'],
-  ].forEach(([set, url]) => {
-    fetch(url).then(r => r.arrayBuffer())
-      .then(ab => audioCtx.decodeAudioData(ab))
-      .then(buf => (set === 'A' ? bufsA : bufsB).push(buf))
-      .catch(() => {});
+let aC=null; const bA=[],bB=[];
+function initAudio(){
+  if(aC)return;
+  aC=new(window.AudioContext||window.webkitAudioContext)();
+  [['A','audio/TWAV_A1.WAV'],['A','audio/TWAV_A2.WAV'],['A','audio/TWAV_A3.WAV'],
+   ['A','audio/TWAV_A4.WAV'],['A','audio/TWAV_A5.WAV'],['A','audio/TWAV_A6.WAV'],
+   ['B','audio/TWAV_B1.WAV'],['B','audio/TWAV_B2.WAV'],['B','audio/TWAV_B3.WAV'],
+  ].forEach(([s,u])=>fetch(u).then(r=>r.arrayBuffer()).then(a=>aC.decodeAudioData(a))
+    .then(b=>(s==='A'?bA:bB).push(b)).catch(()=>{}));
+}
+function play(buf){
+  if(!buf||!aC) return Promise.resolve(2);
+  if(aC.state==='suspended') aC.resume();
+  return new Promise(r=>{
+    const s=aC.createBufferSource(); s.buffer=buf;
+    s.connect(aC.destination); s.onended=()=>r(buf.duration); s.start();
   });
 }
 
-function playBuf(buf) {
-  if (!buf || !audioCtx) return Promise.resolve(1.5);
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-  return new Promise(resolve => {
-    const s = audioCtx.createBufferSource();
-    s.buffer = buf;
-    s.connect(audioCtx.destination);
-    s.onended = () => resolve(buf.duration);
-    s.start();
-  });
+// === WIN 3.1 DESKTOP ===
+function drawDesktop(){
+  ctx.fillStyle='#008080';
+  ctx.fillRect(0,0,W,H);
+
+  const wx=8, wy=0, ww=W-16, wh=Math.round(H*0.58);
+  drawWin(wx,wy,ww,wh,'Program Manager');
+
+  const gi=wx+8, gw=ww-32;
+  const gh1=Math.round(wh*0.37), gh2=Math.round(wh*0.34);
+  drawGroup(gi, wy+30, gw, gh1, 'Main');
+  drawGroup(gi, wy+30+gh1+6, gw, gh2, 'Accessories');
+
+  const sp=Math.floor((gw-16)/5);
+  const mi=wy+30+14;
+  drawIcon(gi+8,       mi,'filemanager','File\nMgr');
+  drawIcon(gi+8+sp,    mi,'controlpanel','Control\nPanel');
+  drawIcon(gi+8+sp*2,  mi,'printmgr','Print\nMgr');
+  drawIcon(gi+8+sp*3,  mi,'msdos','MS-DOS\nPrompt');
+  drawIcon(gi+8+sp*4,  mi,'clipboard','Clipboard');
+
+  const ai=wy+30+gh1+20;
+  drawIcon(gi+8,       ai,'notepad','Notepad');
+  drawIcon(gi+8+sp,    ai,'calc','Calculator');
+  drawIcon(gi+8+sp*2,  ai,'paint','Paintbrush');
+  drawIcon(gi+8+sp*3,  ai,'clock','Clock');
+  drawIcon(gi+8+sp*4,  ai,'write','Write');
+
+  drawScrollbar(wx+ww-18, wy+20, 17, wh-21);
+
+  const sY=wy+wh;
+  ctx.fillStyle='#c0c0c0'; ctx.fillRect(wx,sY,ww,16);
+  inset(wx,sY,ww,16);
+  ctx.fillStyle='#000'; ctx.font='9px "Courier New"';
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText('  2 Group(s)',wx+4,sY+8);
 }
 
-// ─── PIXEL ART SPRITES ────────────────────────────────────────────────────────
-// 0=transparent 1=black 2=white 3=skin 4=yellow(gloves) 5=cyan(shoes) 6=glasses 7=gold(belt)
-const PAL = [null,'#1a1a1a','#f0f0f0','#f5c070','#ffe600','#28dde8','#444','#c8960a'];
+function drawWin(x,y,w,h,title){
+  ctx.fillStyle='#c0c0c0'; ctx.fillRect(x,y,w,h);
+  ctx.fillStyle='#000080'; ctx.fillRect(x,y,w,20);
+  ctx.fillStyle='#fff'; ctx.font='bold 11px "Courier New"';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(title,x+w/2,y+10);
+  ctx.fillStyle='#c0c0c0'; ctx.fillRect(x+2,y+2,16,16); raise(x+2,y+2,16,16);
+  ctx.fillStyle='#000'; ctx.fillRect(x+5,y+9,10,3);
+  raise(w+x-36,y+2,16,16); raise(w+x-18,y+2,16,16);
+  ctx.fillStyle='#000'; ctx.font='9px "Courier New"'; ctx.textAlign='center';
+  ctx.fillText('▼',w+x-28,y+11); ctx.fillText('▲',w+x-10,y+11);
+  ctx.strokeStyle='#fff'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x,y+h); ctx.lineTo(x,y+20); ctx.lineTo(x+w,y+20); ctx.stroke();
+  ctx.strokeStyle='#808080';
+  ctx.beginPath(); ctx.moveTo(x+w,y+20); ctx.lineTo(x+w,y+h); ctx.lineTo(x,y+h); ctx.stroke();
+}
 
-const PS = 5; // pixels per sprite-pixel
+function drawGroup(x,y,w,h,title){
+  ctx.strokeStyle='#808080'; ctx.lineWidth=1;
+  ctx.strokeRect(x,y+6,w,h-6);
+  ctx.fillStyle='#c0c0c0'; ctx.fillRect(x+8,y,title.length*7+4,12);
+  ctx.fillStyle='#000'; ctx.font='10px "Courier New"';
+  ctx.textAlign='left'; ctx.textBaseline='top';
+  ctx.fillText(title,x+10,y);
+}
 
-const SPR = {
-  crouch: [
-    [0,0,1,1,1,0,0,0],
-    [0,1,1,2,1,1,0,0],
-    [0,1,3,3,3,1,0,0],
-    [0,0,3,6,3,0,0,0],
-    [0,2,2,2,2,2,0,0],
-    [4,2,2,7,2,2,4,0],
-    [0,5,2,5,2,5,0,0],
-    [0,5,5,0,5,5,0,0],
-  ],
-  stand: [
-    [0,0,1,1,1,0,0,0],
-    [0,1,1,2,1,1,0,0],
-    [0,1,3,3,3,1,0,0],
-    [0,0,3,6,3,0,0,0],
-    [0,0,0,3,0,0,0,0],
-    [0,2,2,2,2,2,0,0],
-    [0,2,2,2,2,2,0,0],
-    [0,2,7,7,7,2,0,0],
-    [4,0,2,0,2,0,4,0],
-    [0,0,2,0,2,0,0,0],
-    [0,0,2,0,2,0,0,0],
-    [0,0,2,0,2,0,0,0],
-    [0,5,5,0,5,5,0,0],
-  ],
-  hips: [
-    [0,0,0,1,1,1,0,0,0,0],
-    [0,0,1,1,2,1,1,0,0,0],
-    [0,0,1,3,3,3,1,0,0,0],
-    [0,0,0,3,6,3,0,0,0,0],
-    [0,0,0,0,3,0,0,0,0,0],
-    [0,0,2,2,2,2,2,0,0,0],
-    [4,2,2,2,2,2,2,2,4,0],
-    [4,0,2,7,7,2,0,4,0,0],
-    [0,0,0,2,0,2,0,0,0,0],
-    [0,0,0,2,0,2,0,0,0,0],
-    [0,0,0,2,0,2,0,0,0,0],
-    [0,0,5,5,0,5,5,0,0,0],
-  ],
-  point: [
-    [0,0,0,1,1,1,0,0,0,0,0,0,4],
-    [0,0,1,1,2,1,1,0,0,0,0,2,0],
-    [0,0,1,3,3,3,1,0,0,0,2,0,0],
-    [0,0,0,3,6,3,0,0,0,2,0,0,0],
-    [0,0,0,0,3,0,0,0,0,0,0,0,0],
-    [0,2,2,2,2,2,2,2,2,0,0,0,0],
-    [4,0,2,2,2,2,2,0,0,0,0,0,0],
-    [0,0,2,7,7,7,2,0,0,0,0,0,0],
-    [0,0,0,2,0,2,0,0,0,0,0,0,0],
-    [0,0,0,2,0,2,0,0,0,0,0,0,0],
-    [0,0,0,2,0,2,0,0,0,0,0,0,0],
-    [0,0,5,5,0,5,5,0,0,0,0,0,0],
-  ],
-  armsup: [
-    [0,0,0,0,1,1,1,0,0,0,0,0,0,0],
-    [0,0,0,1,1,2,1,1,0,0,0,0,0,0],
-    [4,0,0,1,3,3,3,1,0,0,0,0,0,4],
-    [0,2,0,0,3,6,3,0,0,0,0,0,2,0],
-    [0,0,2,0,0,3,0,0,0,0,0,2,0,0],
-    [0,0,0,2,2,2,2,2,2,2,2,0,0,0],
-    [0,0,0,2,2,7,7,2,2,2,0,0,0,0],
-    [0,0,0,0,2,0,0,2,0,0,0,0,0,0],
-    [0,0,0,0,2,0,0,2,0,0,0,0,0,0],
-    [0,0,0,0,2,0,0,2,0,0,0,0,0,0],
-    [0,0,0,5,5,0,0,5,5,0,0,0,0,0],
-  ],
-  huge: [
-    [0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0],
-    [0,0,0,0,0,1,1,2,1,1,0,0,0,0,0,0,0,0,0],
-    [4,0,0,0,0,1,3,3,3,1,0,0,0,0,0,0,0,0,4],
-    [2,0,0,0,0,0,3,6,3,0,0,0,0,0,0,0,0,2,0],
-    [2,2,0,0,0,0,0,3,0,0,0,0,0,0,0,0,2,2,0],
-    [0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,0,0],
-    [0,0,0,0,0,2,2,7,7,7,2,2,0,0,0,0,0,0,0],
-    [0,0,0,0,0,0,2,0,0,2,0,0,0,0,0,0,0,0,0],
-    [0,0,0,0,0,0,2,0,0,2,0,0,0,0,0,0,0,0,0],
-    [0,0,0,0,0,0,2,0,0,2,0,0,0,0,0,0,0,0,0],
-    [0,0,0,0,0,5,5,0,0,5,5,0,0,0,0,0,0,0,0],
-  ],
-  run1: [
-    [0,1,1,1,0,0,0],
-    [1,1,2,1,1,0,0],
-    [1,3,3,3,1,0,0],
-    [0,3,6,3,0,0,0],
-    [0,0,3,0,0,0,0],
-    [0,2,2,2,2,0,0],
-    [0,2,2,2,2,4,0],
-    [2,2,7,7,2,0,0],
-    [2,0,2,0,0,0,0],
-    [0,0,0,2,0,0,0],
-    [0,5,5,0,2,0,0],
-    [0,0,0,0,5,5,0],
-  ],
-  run2: [
-    [0,1,1,1,0,0,0],
-    [1,1,2,1,1,0,0],
-    [1,3,3,3,1,0,0],
-    [0,3,6,3,0,0,0],
-    [0,0,3,0,0,0,0],
-    [0,2,2,2,2,0,0],
-    [4,2,2,2,2,0,0],
-    [0,2,7,7,2,2,0],
-    [0,0,2,0,0,2,0],
-    [0,2,0,0,0,0,0],
-    [2,5,0,0,5,5,0],
-    [5,5,0,0,0,0,0],
-  ],
-  bow: [
-    [0,0,1,1,1,0,0,0],
-    [0,1,1,2,1,1,0,0],
-    [0,1,3,3,3,1,0,0],
-    [0,0,3,6,3,0,0,0],
-    [0,2,2,3,2,2,0,0],
-    [2,2,2,2,2,2,2,0],
-    [0,2,7,7,7,2,0,0],
-    [0,0,2,2,2,0,0,0],
-    [0,2,2,0,0,0,0,0],
-    [2,5,0,0,0,0,0,0],
-    [5,5,0,0,5,5,0,0],
-  ],
+function raise(x,y,w,h){
+  ctx.strokeStyle='#fff'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x,y+h-1); ctx.lineTo(x,y); ctx.lineTo(x+w-1,y); ctx.stroke();
+  ctx.strokeStyle='#000';
+  ctx.beginPath(); ctx.moveTo(x+w-1,y); ctx.lineTo(x+w-1,y+h-1); ctx.lineTo(x,y+h-1); ctx.stroke();
+}
+function inset(x,y,w,h){
+  ctx.strokeStyle='#808080'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x+w,y); ctx.lineTo(x,y); ctx.lineTo(x,y+h); ctx.stroke();
+  ctx.strokeStyle='#fff';
+  ctx.beginPath(); ctx.moveTo(x,y+h); ctx.lineTo(x+w,y+h); ctx.lineTo(x+w,y); ctx.stroke();
+}
+function drawScrollbar(x,y,w,h){
+  ctx.fillStyle='#c0c0c0'; ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle='#808080'; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
+  raise(x,y,w,16); raise(x,y+h-16,w,16);
+  ctx.fillStyle='#000'; ctx.font='8px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('▲',x+w/2,y+8); ctx.fillText('▼',x+w/2,y+h-8);
+  ctx.fillStyle='#c0c0c0'; ctx.fillRect(x+1,y+18,w-2,24); raise(x+1,y+18,w-2,24);
+}
+
+// === PIXEL ICONS ===
+function drawIcon(x,y,type,label){
+  ctx.save(); ctx.translate(x,y);
+  const S=2;
+  const icons={
+    filemanager:[
+      [0,0,1,1,1,1,0,0,0,0,0,0,0,0],
+      [0,1,3,3,3,3,1,0,0,0,0,0,0,0],
+      [1,3,3,3,3,3,3,1,1,1,1,1,0,0],
+      [1,3,3,3,3,3,3,3,3,3,3,3,1,0],
+      [1,3,1,1,1,1,1,1,1,1,1,3,3,1],
+      [1,3,1,3,3,3,3,3,3,3,1,3,3,1],
+      [1,3,1,1,1,1,1,1,1,1,1,3,3,1],
+      [1,3,3,3,3,3,3,3,3,3,3,3,3,1],
+      [0,1,1,1,1,1,1,1,1,1,1,1,1,0],
+    ],
+    controlpanel:[
+      [0,0,1,1,1,1,1,1,1,1,0,0],
+      [0,1,4,4,4,4,4,4,4,4,1,0],
+      [1,4,4,4,4,4,4,4,4,4,4,1],
+      [1,4,3,3,3,4,4,3,3,4,4,1],
+      [1,4,3,1,3,4,4,3,1,3,4,1],
+      [1,4,3,3,3,4,4,3,3,3,4,1],
+      [1,4,4,4,4,4,4,4,4,4,4,1],
+      [0,1,4,4,4,4,4,4,4,4,1,0],
+      [0,0,1,1,1,1,1,1,1,1,0,0],
+    ],
+    printmgr:[
+      [0,0,1,1,1,1,1,1,1,0],
+      [0,1,3,3,3,3,3,3,3,1],
+      [1,1,1,1,1,1,1,1,1,1],
+      [1,4,4,4,4,4,4,4,4,1],
+      [1,4,4,4,4,4,4,4,4,1],
+      [1,1,1,1,1,1,1,1,1,1],
+      [0,1,3,3,3,3,3,3,3,1],
+      [0,1,3,3,3,3,3,3,3,1],
+      [0,0,1,1,1,1,1,1,1,0],
+    ],
+    msdos:[
+      [1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,0,0,0,0,0,0,0,0,0,0,1],
+      [1,0,5,5,0,0,0,0,0,0,0,1],
+      [1,0,0,5,5,0,0,0,0,0,0,1],
+      [1,0,0,0,5,0,0,0,0,0,0,1],
+      [1,0,0,5,5,0,0,0,0,0,0,1],
+      [1,0,5,5,0,0,0,0,0,0,0,1],
+      [1,0,0,0,0,0,0,0,0,0,0,1],
+      [1,1,1,1,1,1,1,1,1,1,1,1],
+    ],
+    clipboard:[
+      [0,1,1,0,0,1,1,0],
+      [1,3,3,1,1,3,3,1],
+      [1,3,3,1,1,3,3,1],
+      [0,1,1,3,3,1,1,0],
+      [0,0,1,3,3,1,0,0],
+      [0,0,1,3,3,1,0,0],
+      [0,0,1,3,3,1,0,0],
+      [0,0,1,3,3,1,0,0],
+      [0,0,1,1,1,1,0,0],
+    ],
+    notepad:[
+      [0,1,1,1,1,1,1,1,1,0],
+      [1,3,3,3,3,3,3,3,3,1],
+      [1,3,1,1,1,1,1,1,3,1],
+      [1,3,1,1,1,1,1,1,3,1],
+      [1,3,1,1,1,1,1,1,3,1],
+      [1,3,1,1,1,1,1,1,3,1],
+      [1,3,1,1,1,1,1,1,3,1],
+      [1,3,3,3,3,3,3,3,3,1],
+      [0,1,1,1,1,1,1,1,1,0],
+    ],
+    calc:[
+      [0,1,1,1,1,1,1,1,0],
+      [1,4,4,4,4,4,4,4,1],
+      [1,4,3,3,3,3,4,4,1],
+      [1,4,4,4,4,4,4,4,1],
+      [1,4,3,4,3,4,3,4,1],
+      [1,4,4,4,4,4,4,4,1],
+      [1,4,3,4,3,4,3,4,1],
+      [1,4,4,4,4,4,4,4,1],
+      [0,1,1,1,1,1,1,1,0],
+    ],
+    paint:[
+      [0,0,0,1,0,0,0,0,0,0],
+      [0,0,1,6,1,0,0,0,0,0],
+      [0,1,6,6,6,1,0,0,0,0],
+      [1,6,3,3,6,6,1,0,0,0],
+      [0,1,3,3,3,1,0,0,0,0],
+      [0,0,1,3,1,0,0,0,0,0],
+      [0,0,0,1,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0],
+    ],
+    clock:[
+      [0,0,1,1,1,1,1,0,0],
+      [0,1,3,3,3,3,3,1,0],
+      [1,3,3,3,1,3,3,3,1],
+      [1,3,3,3,1,3,3,3,1],
+      [1,3,1,1,1,3,3,3,1],
+      [1,3,3,3,3,3,3,3,1],
+      [1,3,3,3,3,3,3,3,1],
+      [0,1,3,3,3,3,3,1,0],
+      [0,0,1,1,1,1,1,0,0],
+    ],
+    write:[
+      [0,1,1,1,1,1,1,1,1,0],
+      [1,3,3,3,3,3,3,3,3,1],
+      [1,3,1,1,1,3,3,3,3,1],
+      [1,3,1,1,1,3,3,3,3,1],
+      [1,3,3,3,3,3,3,3,3,1],
+      [1,3,1,1,3,3,3,3,3,1],
+      [1,3,1,1,3,3,3,3,3,1],
+      [1,3,3,3,3,3,3,3,3,1],
+      [0,1,1,1,1,1,1,1,1,0],
+    ],
+  };
+  const pal={0:null,1:'#000',2:'#fff',3:'#c0c0c0',4:'#808080',5:'#00ff00',6:'#0000aa'};
+  const g=icons[type]||icons.notepad;
+  g.forEach((row,ry)=>row.forEach((p,rx)=>{
+    const c=pal[p]; if(!c)return;
+    ctx.fillStyle=c; ctx.fillRect(rx*S,ry*S,S,S);
+  }));
+  ctx.fillStyle='#000'; ctx.font='8px "Courier New"';
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  const lines=(label||'').split('\n'), ih=g.length*S;
+  lines.forEach((ln,i)=>ctx.fillText(ln,(g[0].length*S)/2,ih+2+i*9));
+  ctx.restore();
+}
+
+// === ELVIS ===
+const E={
+  skin:'#f5c48a', hair:'#111', white:'#f4f4f4',
+  gold:'#d4a017', shoes:'#2020cc', gloves:'#ffe000',
+  glass:'#333',
 };
 
-function spriteW(name) { return (SPR[name][0] || []).length; }
-function spriteH(name) { return SPR[name].length; }
-
-function drawSprite(name, cx, floorY, flipX) {
-  const rows = SPR[name];
-  const sw = spriteW(name), sh = spriteH(name);
-  const ox = cx - (sw * PS) / 2;
-  const oy = floorY - sh * PS;
-  ctx.save();
-  if (flipX) { ctx.translate(cx * 2, 0); ctx.scale(-1, 1); }
-  rows.forEach((row, ry) => {
-    row.forEach((px, rx) => {
-      if (!px) return;
-      ctx.fillStyle = PAL[px];
-      ctx.fillRect(Math.round(ox + rx * PS), Math.round(oy + ry * PS), PS, PS);
-    });
-  });
-  ctx.restore();
-}
-
-// ─── SCENE ────────────────────────────────────────────────────────────────────
-function drawTemple(x, y, tw, th) {
-  ctx.fillStyle = '#ffffff';
-  const stepH = Math.round(th * 0.1);
-  for (let s = 0; s < 3; s++) {
-    const sx  = x + s * Math.round(tw * 0.05);
-    const sw2 = tw - s * Math.round(tw * 0.1);
-    ctx.fillRect(sx, y + th - (s + 1) * stepH, sw2, stepH);
-  }
-  const bodyY = y + Math.round(th * 0.28);
-  const bodyH = th - Math.round(th * 0.28) - stepH * 3;
-  const bodyX = x + Math.round(tw * 0.06);
-  const bodyW = tw - Math.round(tw * 0.12);
-  const nCols = 4;
-  const colW  = Math.round(bodyW * 0.12);
-  const colGap = (bodyW - nCols * colW) / (nCols - 1);
-  for (let c = 0; c < nCols; c++) {
-    ctx.fillRect(bodyX + c * (colW + colGap), bodyY, colW, bodyH);
-  }
-  const entH = Math.round(th * 0.09);
-  ctx.fillRect(bodyX, bodyY - entH, bodyW, entH);
+function elvisReclining(cx,by){
+  ctx.save(); ctx.translate(cx,by);
+  ctx.rotate(-Math.PI/5.5);
+  ctx.translate(-22,6);
+  ctx.fillStyle=E.white;
+  ctx.beginPath(); ctx.roundRect(-22,-14,44,28,4); ctx.fill();
+  ctx.fillStyle=E.gold; ctx.fillRect(-22,4,44,5); ctx.fillRect(-22,-14,44,5);
+  ctx.fillStyle=E.white; ctx.fillRect(-18,14,14,38); ctx.fillRect(4,14,14,38);
+  ctx.fillStyle=E.shoes;
+  ctx.beginPath(); ctx.roundRect(-23,48,21,11,3); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(2,48,21,11,3); ctx.fill();
+  ctx.fillStyle=E.skin;
+  ctx.beginPath(); ctx.ellipse(-32,-6,12,7,-0.4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=E.skin;
+  ctx.beginPath(); ctx.ellipse(-38,-22,15,19,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=E.hair;
   ctx.beginPath();
-  ctx.moveTo(x, bodyY - entH);
-  ctx.lineTo(x + tw / 2, y);
-  ctx.lineTo(x + tw, bodyY - entH);
-  ctx.closePath();
+  ctx.moveTo(-52,-30);
+  ctx.bezierCurveTo(-58,-56,-18,-58,-16,-34);
+  ctx.bezierCurveTo(-22,-22,-48,-18,-52,-30);
   ctx.fill();
-}
-
-function drawBackground() {
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, W, H);
-  const tw = Math.round(Math.min(W, H) * 0.28);
-  const th = Math.round(tw * 0.85);
-  const mg = Math.round(tw * 0.06);
-  drawTemple(mg,       mg,         tw, th);
-  drawTemple(W-tw-mg, mg,         tw, th);
-  drawTemple(mg,       H-th-mg-38, tw, th);
-  drawTemple(W-tw-mg, H-th-mg-38, tw, th);
-}
-
-// ─── STAGE BOX ────────────────────────────────────────────────────────────────
-let boxOpacity = 0;
-
-function drawStageBox(boxCX, boxCY, boxSize) {
-  if (boxOpacity <= 0) return;
-  ctx.save();
-  ctx.globalAlpha = boxOpacity;
-  const x = boxCX - boxSize / 2;
-  const y = boxCY - boxSize / 2;
-  ctx.fillStyle = '#000';
-  ctx.fillRect(x, y, boxSize, boxSize);
-  ctx.strokeStyle = '#0000ff';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(x, y, boxSize, boxSize);
+  ctx.fillRect(-52,-32,6,14);
+  ctx.fillStyle=E.glass;
+  ctx.beginPath(); ctx.ellipse(-43,-22,6,4,0.2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-32,-24,6,4,-0.15,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=E.gold; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(-37,-23); ctx.lineTo(-35,-24); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(-43,-22,6,4,0.2,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(-32,-24,6,4,-0.15,0,Math.PI*2); ctx.stroke();
   ctx.restore();
 }
 
-// ─── STATE MACHINE ────────────────────────────────────────────────────────────
-const ST = { IDLE:0, BOX_IN:1, CROUCH:2, RISE:3, HIPS:4, POINT:5, ARMSUP:6, HUGE:7, RUN:8, BOW:9, SINK:10, BOX_OUT:11 };
-let state = ST.IDLE, stateTimer = 0, performing = false;
-let runX = 0, runDir = 1, runFrame = 0;
-let autoTimer = 0;
-const AUTO_MS = 50000;
+function elvisStanding(cx,by,pose,risingT){
+  ctx.save(); ctx.translate(cx,by);
+  if(risingT!==undefined && risingT<1){
+    ctx.rotate(-Math.PI/5.5*(1-risingT));
+    ctx.translate(-22*(1-risingT), 6*(1-risingT));
+  }
+  ctx.fillStyle=E.shoes;
+  ctx.beginPath(); ctx.roundRect(-28,-14,24,14,4); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(4,-14,24,14,4); ctx.fill();
+  ctx.fillStyle=E.white;
+  ctx.fillRect(-22,-66,18,54); ctx.fillRect(4,-66,18,54);
+  ctx.fillStyle=E.gold; ctx.fillRect(-24,-72,48,8);
+  ctx.fillStyle='#fff'; ctx.fillRect(-9,-73,18,10);
+  ctx.strokeStyle=E.gold; ctx.lineWidth=1; ctx.strokeRect(-9,-73,18,10);
+  ctx.fillStyle=E.white;
+  ctx.beginPath();
+  ctx.moveTo(-24,-66); ctx.lineTo(24,-66);
+  ctx.lineTo(20,-112); ctx.lineTo(-20,-112);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle=E.gold;
+  ctx.beginPath(); ctx.moveTo(-18,-112); ctx.lineTo(0,-96); ctx.lineTo(18,-112); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#4466ff';
+  for(let i=0;i<5;i++){ ctx.beginPath(); ctx.arc(-8+i*4,-108,1.5,0,Math.PI*2); ctx.fill(); }
+  ctx.fillStyle=E.gold; ctx.fillRect(-27,-110,5,42); ctx.fillRect(22,-110,5,42);
+  if(pose==='hips'){
+    arm(-20,-110,-44,-92,-28,-76); arm(20,-110,44,-92,28,-76);
+    glove(-28,-76); glove(28,-76);
+  } else if(pose==='point'){
+    arm(-20,-110,-26,-82,-28,-64); glove(-28,-64);
+    arm(20,-110,48,-128,68,-150); glove(68,-150);
+  } else if(pose==='armsup'){
+    arm(-20,-110,-50,-128,-70,-146); arm(20,-110,50,-128,70,-146);
+    glove(-70,-146); glove(70,-146);
+  } else if(pose==='huge'){
+    arm(-20,-110,-52,-110,-86,-108); arm(20,-110,52,-110,86,-108);
+    glove(-86,-108); glove(86,-108);
+  } else if(pose==='bow'){
+    arm(-20,-110,-12,-88,2,-70); arm(20,-110,12,-88,2,-70); glove(2,-70);
+  } else {
+    arm(-20,-110,-24,-84,-26,-66); arm(20,-110,24,-84,26,-66);
+    glove(-26,-66); glove(26,-66);
+  }
+  ctx.fillStyle=E.skin;
+  ctx.beginPath(); ctx.ellipse(0,-126,19,22,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=E.hair; ctx.fillRect(-18,-134,6,16); ctx.fillRect(12,-134,6,16);
+  ctx.fillStyle=E.hair;
+  ctx.beginPath();
+  ctx.moveTo(-20,-138);
+  ctx.bezierCurveTo(-26,-166,26,-166,20,-138);
+  ctx.bezierCurveTo(14,-128,-14,-128,-20,-138);
+  ctx.fill();
+  ctx.fillStyle='#2a2a2a';
+  ctx.beginPath(); ctx.moveTo(-4,-158); ctx.bezierCurveTo(-2,-166,8,-166,10,-158);
+  ctx.bezierCurveTo(8,-150,-2,-150,-4,-158); ctx.fill();
+  ctx.fillStyle=E.glass;
+  ctx.beginPath(); ctx.ellipse(-8,-124,8,5,-0.1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(8,-124,8,5,0.1,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=E.gold; ctx.lineWidth=1.8;
+  ctx.beginPath(); ctx.ellipse(-8,-124,8,5,-0.1,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(8,-124,8,5,0.1,0,Math.PI*2); ctx.stroke();
+  ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(-1,-124); ctx.lineTo(0,-124); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-16,-123); ctx.lineTo(-22,-121); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(16,-123); ctx.lineTo(22,-121); ctx.stroke();
+  ctx.fillStyle='#b05868';
+  ctx.beginPath(); ctx.ellipse(2,-114,5,3,0.15,0,Math.PI); ctx.fill();
+  ctx.restore();
+}
 
-let lastTs = 0;
-function loop(ts) {
-  const dt = Math.min(ts - lastTs, 80);
-  lastTs = ts;
-  autoTimer += dt;
-  if (autoTimer >= AUTO_MS && !performing) { autoTimer = 0; trigger(); }
-  update(dt);
-  render();
+function arm(x1,y1,xm,ym,x2,y2){
+  ctx.strokeStyle=E.white; ctx.lineWidth=12; ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(xm,ym); ctx.lineTo(x2,y2); ctx.stroke();
+  const ang=Math.atan2(y2-ym,x2-xm);
+  const ex=x2-Math.cos(ang)*5, ey=y2-Math.sin(ang)*5;
+  ctx.strokeStyle=E.gold; ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(ex-Math.sin(ang)*6, ey+Math.cos(ang)*6);
+  ctx.lineTo(ex+Math.sin(ang)*6, ey-Math.cos(ang)*6);
+  ctx.stroke();
+}
+
+function glove(x,y){
+  ctx.fillStyle=E.gloves;
+  ctx.beginPath(); ctx.arc(x,y,9,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#cc8800'; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.arc(x,y,9,0,Math.PI*2); ctx.stroke();
+}
+
+function elvisRunning(cx,by,stT){
+  const fr=Math.floor(stT/130)%2;
+  ctx.save(); ctx.translate(cx,by);
+  ctx.fillStyle=E.shoes;
+  if(fr===0){
+    ctx.beginPath(); ctx.roundRect(0,-12,22,12,3); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(-20,-48,20,12,3); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.roundRect(-20,-12,22,12,3); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(0,-48,20,12,3); ctx.fill();
+  }
+  ctx.strokeStyle=E.white; ctx.lineWidth=15; ctx.lineCap='round';
+  if(fr===0){
+    ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(-10,-44); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(12,-52); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(10,-52); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(-12,-44); ctx.stroke();
+  }
+  ctx.fillStyle=E.gold; ctx.fillRect(-14,-76,28,8);
+  ctx.fillStyle=E.white;
+  ctx.beginPath();
+  ctx.moveTo(-14,-66); ctx.lineTo(12,-66);
+  ctx.lineTo(8,-110); ctx.lineTo(-10,-110);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle=E.gold; ctx.fillRect(-18,-108,5,38);
+  ctx.fillStyle=E.gold;
+  ctx.beginPath(); ctx.moveTo(-10,-110); ctx.lineTo(0,-96); ctx.lineTo(10,-110); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle=E.white; ctx.lineWidth=11; ctx.lineCap='round';
+  if(fr===0){
+    ctx.beginPath(); ctx.moveTo(-10,-104); ctx.lineTo(-28,-84); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(8,-104);  ctx.lineTo(24,-124); ctx.stroke();
+    glove(-28,-84); glove(24,-124);
+  } else {
+    ctx.beginPath(); ctx.moveTo(-10,-104); ctx.lineTo(-26,-126); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(8,-104);  ctx.lineTo(28,-86); ctx.stroke();
+    glove(-26,-126); glove(28,-86);
+  }
+  ctx.fillStyle=E.skin;
+  ctx.beginPath(); ctx.ellipse(2,-124,15,19,0.15,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=E.hair; ctx.fillRect(-12,-134,5,14);
+  ctx.fillStyle=E.hair;
+  ctx.beginPath();
+  ctx.moveTo(-12,-136);
+  ctx.bezierCurveTo(-8,-158,20,-156,14,-136);
+  ctx.bezierCurveTo(10,-128,-8,-128,-12,-136);
+  ctx.fill();
+  ctx.fillStyle=E.glass;
+  ctx.beginPath(); ctx.ellipse(6,-124,7,4,0.2,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=E.gold; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.ellipse(6,-124,7,4,0.2,0,Math.PI*2); ctx.stroke();
+  ctx.restore();
+}
+
+// === STATE MACHINE ===
+const ST={IDLE:0,RISING:1,HIPS:2,POINT:3,ARMSUP:4,HUGE:5,RUN:6,BOW:7,SINKING:8};
+let state=ST.IDLE, stT=0, doing=false;
+let runX=0, runDir=1, autoT=0;
+const AUTO=48000;
+
+function nextState(s){ state=s; stT=0; }
+
+function update(dt){
+  stT+=dt; autoT+=dt;
+  if(autoT>=AUTO && !doing){ autoT=0; trigger(); }
+  switch(state){
+    case ST.RISING:  if(stT>550)  nextState(ST.HIPS); break;
+    case ST.HIPS:
+      if(stT>650){
+        const i=Math.floor(Math.random()*bA.length)||0;
+        capEl.textContent=LA[i]||LA[0]; capEl.classList.add('on');
+        play(bA[i]).then(()=>{ if(state===ST.POINT) nextState(ST.ARMSUP); });
+        nextState(ST.POINT);
+      }
+      break;
+    case ST.POINT:   if(stT>4500) nextState(ST.ARMSUP); break;
+    case ST.ARMSUP:
+      if(stT>400){
+        const i=Math.floor(Math.random()*bB.length)||0;
+        capEl.textContent=LB[i]||LB[0]; capEl.classList.add('on');
+        play(bB[i]).then(()=>{ if(state===ST.HUGE) nextState(ST.RUN); });
+        nextState(ST.HUGE);
+      }
+      break;
+    case ST.HUGE:    if(stT>4500) nextState(ST.RUN); break;
+    case ST.RUN:
+      capEl.classList.remove('on');
+      runX+=runDir*dt*0.10;
+      if(runX>1){runX=1;runDir=-1;} if(runX<0){runX=0;runDir=1;}
+      if(stT>2400) nextState(ST.BOW);
+      break;
+    case ST.BOW:     if(stT>700)  nextState(ST.SINKING); break;
+    case ST.SINKING:
+      if(stT>600){ doing=false; state=ST.IDLE; capEl.classList.remove('on'); }
+      break;
+  }
+}
+
+// === RENDER ===
+function render(){
+  drawDesktop();
+  const winH=Math.round(H*0.58);
+  const stageY=winH+18;
+  const stageCX=Math.round(W/2);
+  if(state!==ST.IDLE){
+    ctx.fillStyle='rgba(0,0,0,0.2)';
+    ctx.beginPath(); ctx.ellipse(stageCX,stageY+3,36,7,0,0,Math.PI*2); ctx.fill();
+  }
+  switch(state){
+    case ST.IDLE:    elvisReclining(stageCX-20, winH+4); break;
+    case ST.RISING:  elvisStanding(stageCX,stageY,'hips',Math.min(stT/550,1)); break;
+    case ST.HIPS:    elvisStanding(stageCX,stageY,'hips'); break;
+    case ST.POINT:   elvisStanding(stageCX,stageY,'point'); break;
+    case ST.ARMSUP:  elvisStanding(stageCX,stageY,'armsup'); break;
+    case ST.HUGE:    elvisStanding(stageCX,stageY,'huge'); break;
+    case ST.RUN:{
+      const range=(W-140)*0.48;
+      const ex=stageCX+Math.round((runX-0.5)*range);
+      elvisRunning(ex,stageY,stT);
+      break;
+    }
+    case ST.BOW:     elvisStanding(stageCX,stageY,'bow'); break;
+    case ST.SINKING: elvisStanding(stageCX,stageY,'hips',1-Math.min(stT/600,1)); break;
+  }
+}
+
+// === LOOP ===
+let lastTs=0;
+function loop(ts){
+  const dt=Math.min(ts-lastTs,80); lastTs=ts;
+  update(dt); render();
   requestAnimationFrame(loop);
 }
 
-function update(dt) {
-  stateTimer += dt;
-  switch (state) {
-    case ST.BOX_IN:
-      boxOpacity = Math.min(1, stateTimer / 250);
-      if (stateTimer > 350) next(ST.CROUCH);
-      break;
-    case ST.CROUCH:
-      if (stateTimer > 400) next(ST.RISE);
-      break;
-    case ST.RISE:
-      if (stateTimer > 350) next(ST.HIPS);
-      break;
-    case ST.HIPS:
-      if (stateTimer > 700) {
-        const idxA = Math.floor(Math.random() * bufsA.length) || 0;
-        const lineA = LINES_A[idxA] || LINES_A[0];
-        showCaption(lineA);
-        playBuf(bufsA[idxA]).then(() => { if (state === ST.POINT) next(ST.ARMSUP); });
-        next(ST.POINT);
-      }
-      break;
-    case ST.POINT:
-      if (stateTimer > 4000) next(ST.ARMSUP);
-      break;
-    case ST.ARMSUP:
-      if (stateTimer > 300) {
-        const idxB = Math.floor(Math.random() * bufsB.length) || 0;
-        const lineB = LINES_B[idxB] || LINES_B[0];
-        showCaption(lineB);
-        playBuf(bufsB[idxB]).then(() => { if (state === ST.HUGE) next(ST.RUN); });
-        next(ST.HUGE);
-      }
-      break;
-    case ST.HUGE:
-      if (stateTimer > 4000) next(ST.RUN);
-      break;
-    case ST.RUN:
-      hideCaption();
-      runX += runDir * dt * 0.12;
-      runFrame = Math.floor(stateTimer / 130) % 2;
-      if (runX > 1) { runX = 1; runDir = -1; }
-      if (runX < 0) { runX = 0; runDir =  1; }
-      if (stateTimer > 2200) next(ST.BOW);
-      break;
-    case ST.BOW:
-      if (stateTimer > 600) next(ST.SINK);
-      break;
-    case ST.SINK:
-      if (stateTimer > 400) next(ST.BOX_OUT);
-      break;
-    case ST.BOX_OUT:
-      boxOpacity = Math.max(0, 1 - stateTimer / 300);
-      if (stateTimer > 400) { boxOpacity = 0; performing = false; state = ST.IDLE; }
-      break;
-  }
-}
-
-function next(s) { state = s; stateTimer = 0; }
-
-function render() {
-  drawBackground();
-  if (state === ST.IDLE) return;
-  const boxSize = Math.round(Math.min(W * 0.56, H * 0.38, 220));
-  const boxCX   = Math.round(W / 2);
-  const boxCY   = Math.round(H * 0.46);
-  const floor   = boxCY + Math.round(boxSize * 0.46);
-  drawStageBox(boxCX, boxCY, boxSize);
-  if (boxOpacity <= 0) return;
-  ctx.save();
-  ctx.globalAlpha = boxOpacity;
-  ctx.beginPath();
-  ctx.rect(boxCX - boxSize/2 + 4, boxCY - boxSize/2 + 4, boxSize - 8, boxSize - 8);
-  ctx.clip();
-  switch (state) {
-    case ST.BOX_IN: case ST.CROUCH: drawSprite('crouch', boxCX, floor); break;
-    case ST.RISE:                   drawSprite('stand',  boxCX, floor); break;
-    case ST.HIPS:                   drawSprite('hips',   boxCX, floor); break;
-    case ST.POINT:                  drawSprite('point',  boxCX, floor); break;
-    case ST.ARMSUP:                 drawSprite('armsup', boxCX, floor); break;
-    case ST.HUGE:                   drawSprite('huge',   boxCX, floor); break;
-    case ST.RUN: {
-      const range = boxSize * 0.55;
-      const ex = boxCX + Math.round((runX - 0.5) * range);
-      drawSprite(runFrame === 0 ? 'run1' : 'run2', ex, floor, runDir < 0);
-      break;
-    }
-    case ST.BOW:  drawSprite('bow',    boxCX, floor); break;
-    case ST.SINK: case ST.BOX_OUT: drawSprite('crouch', boxCX, floor); break;
-  }
-  ctx.restore();
-}
-
-function trigger() {
-  if (performing) return;
-  performing = true; autoTimer = 0;
-  hintEl.style.display = 'none';
+function trigger(){
+  if(doing)return;
+  doing=true; autoT=0;
+  hintEl.style.display='none';
   initAudio();
-  runX = 0; runDir = 1; boxOpacity = 0;
-  next(ST.BOX_IN);
+  runX=0; runDir=1;
+  nextState(ST.RISING);
 }
 
-function showCaption(t) { captionEl.textContent = t; captionEl.classList.add('visible'); }
-function hideCaption()  { captionEl.classList.remove('visible'); }
+function onTap(e){ e.preventDefault(); initAudio(); if(!doing) trigger(); }
+canvas.addEventListener('touchstart',onTap,{passive:false});
+canvas.addEventListener('click',onTap);
 
-function onTap(e) { e.preventDefault(); initAudio(); if (!performing) trigger(); }
-canvas.addEventListener('touchstart', onTap, { passive: false });
-canvas.addEventListener('click', onTap);
-
-requestAnimationFrame(ts => { lastTs = ts; loop(ts); });
+requestAnimationFrame(ts=>{ lastTs=ts; loop(ts); });
 </script>
 </body>
 </html>
