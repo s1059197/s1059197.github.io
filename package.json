@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist -b gh-pages -e trip-dashboard --add -m \"deploy: publish trip-dashboard\""
+    "deploy": "gh-pages -d dist -b master -e trip-dashboard --add -m \"deploy: publish trip-dashboard\""
   },
   "dependencies": {
     "lucide-react": "^0.474.0",
