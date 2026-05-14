@@ -26,16 +26,25 @@ so all asset URLs resolve correctly under that subpath on GitHub Pages.
 
 ## Deployment
 
-The site is published from the `gh-pages` branch and served at
-`https://s1059197.github.io/trip-dashboard/`.
+GitHub Pages is configured to serve `master / (root)`, alongside the other
+top-level pages (`bushrun.html`, `casemakr.html`, `specials.html`, etc.). The
+build for this app is published into the `trip-dashboard/` subdirectory of
+`master`, so it lives at `https://s1059197.github.io/trip-dashboard/`.
 
 ```sh
-npm run build
 npm run deploy
 ```
 
-`deploy` publishes the contents of `dist/` to the `gh-pages` branch via the
-`gh-pages` package — it does not touch any other branch.
+`deploy` runs `vite build` (via `predeploy`) and then `scripts/deploy.sh`,
+which:
+
+1. Creates a temporary `git worktree` from `origin/master`.
+2. Replaces only the `trip-dashboard/` subdirectory with the new build.
+3. Commits and pushes `HEAD:master`.
+4. Removes the worktree.
+
+It touches no other files on `master`. If there are no changes since the last
+deploy, it exits without committing.
 
 ## Project layout
 
