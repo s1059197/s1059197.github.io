@@ -73,6 +73,7 @@ const countryLabels = [
 //  LINK URLS (kept here to keep schedule readable)
 // ═══════════════════════════════════════════════════════════════════════════
 const URL_STAY_KOOOK    = "https://www.staykooook.com/munich-city/en/";
+const URL_BREAD_MARKET  = "https://www.brotmarkt.com/";
 const URL_VIKTUALIEN    = "https://www.viktualienmarkt-muenchen.de/en/home/";
 const URL_BMW_WELT      = "https://www.bmw-welt.com/en/index.html";
 const URL_PRINZ_MYSHKIN = "https://prinzmyshkin.com/en";
@@ -111,14 +112,16 @@ const days = [
       { time: "AM",    text: "Land at MUC. Complete EES registration at immigration — eat/hydrate on plane." },
       { time: "AM",    text: "S1 train to Hauptbahnhof (~40 min). MVGO group ticket €32.50." },
       { time: "AM",    text: `Drop bags at [Stay Koook](${URL_STAY_KOOOK}) (mobile check-in). REWE quick stop.` },
+      { time: "AM",    text: `[Bread Market](${URL_BREAD_MARKET}) — 15 artisan stalls.`, optional: true },
       { time: "11:00", text: "Marienplatz + Glockenspiel show (11 or 12)." },
-      { time: "Noon",  text: "New Town Hall Tower climb, Residenz Palace." },
+      { time: "Noon",  text: "New Town Hall Tower or Alter Peter climb (300 steps), Residenz Palace." },
       { time: "Lunch", text: `[Viktualienmarkt](${URL_VIKTUALIEN}) — Munich Soup Kitchen or Caspar Plautz (potato place).` },
       { time: "PM",    text: "Picknweight vintage, Viscardigasse, Kaufingerstrasse, Asamkirche." },
       { time: "PM",    text: `U3 to [BMW Welt Museum](${URL_BMW_WELT}) (closes 6pm, ~1.5 hr).` },
       { time: "PM",    text: "Olympic Tower nearby.", optional: true },
       { time: "19:00", text: `Dinner: [Prinz Myshkin](${URL_PRINZ_MYSHKIN}) (RSVP'd).`, anchor: true },
       { time: "Eve",   text: `[Midnight Bazaar](${URL_MIDNIGHT_BAZ}) flea market + Filipino street food (5pm–midnight).` },
+      { time: "Eve",   text: "F1 Exhibition is in the same park as the Bazaar — worth a look.", optional: true },
     ],
     reservations: [
       { name: `[Prinz Myshkin](${URL_PRINZ_MYSHKIN})`,   time: "19:00" },
@@ -127,6 +130,8 @@ const days = [
     notes: [
       "EES is new — expect extra time at immigration.",
       "MVGO group ticket (€32.50) covers all city transit today.",
+      "Lidl near the hotel — grab breakfast items for the first two mornings.",
+      "Bring Ben's college ID for student discounts.",
     ],
   },
   {
@@ -190,24 +195,28 @@ const days = [
       { time: "Midday", text: "Salzburg Old Town, Mozart sites, Mirabell Gardens." },
       { time: "Midday", text: "Sunday street music in Old Town 10:30–14:30." },
       { time: "Midday", text: `[Salzburg Marionette Theater](${URL_MARIONETTE}) — check calendar.`, optional: true },
-      { time: "Lunch",  text: "Spicy Spices (vegetarian bio) or Ludwig Burger." },
+      { time: "12:00",  text: "Lunch: Ludwig Burger — RSVP'd for 12:00.", anchor: true },
       { time: "PM",     text: "Getreidegasse + Mozart Birthplace. Konditorei Fürst (pistachio marzipan)." },
+      { time: "PM",     text: "Café Tomaselli — oldest coffee house in Austria.", optional: true },
       { time: "PM",     text: "Stiftsbäckerei St Peter (monastery rye)." },
       { time: "PM",     text: "Hohensalzburg Fortress via railway.", optional: true },
       { time: "PM",     text: "Red Bull Hangar 7 (~1 hr).", optional: true },
       { time: "14:00",  text: "⚠ In car by 14:00 — Eagle's Nest drive is 35 min, closes 5pm.", anchor: true },
       { time: "PM",     text: "Sommerrodelbahn Keltenblitz toboggan en route.", optional: true },
+      { time: "PM",     text: "Two nearby salt mines with rides + tours.", optional: true },
       { time: "PM",     text: `Eagle's Nest (Kehlsteinhaus). Park at Hintereck, take the bus up. [Background reading](${URL_EAGLES_NEST}).` },
       { time: "Eve",    text: "Drive ~2 hrs to Hotel Bergblick (Bad Tölz)." },
     ],
     reservations: [
       { name: "Sixt car",        time: "08:00 pickup" },
+      { name: "Ludwig Burger",   time: "12:00 RSVP" },
       { name: "Hotel Bergblick", time: "Cancel by Jun 6" },
     ],
     notes: [
       "Austrian vignette REQUIRED before crossing border.",
       "Eagle's Nest closes 5pm — last bus from Hintereck is earlier. Be aggressive about timing.",
       "Burger King / McDonald's en route have plant-based options.",
+      "Review the Sixt reservation details before pickup.",
     ],
   },
   {
@@ -239,9 +248,10 @@ const days = [
       { time: "PM",      text: "Neuschwanstein Castle exterior. Marienbrücke viewpoint. Füssen drive-through." },
       { time: "PM",      text: "Highline 179 — longest suspension bridge (15 min back into AT).", optional: true },
       { time: "PM",      text: "Drive ~2 hrs to Vaduz." },
-      { time: "PM",      text: "Appenzeller Schaukäserei (cheese show dairy, 30 min extra).", optional: true },
+      { time: "PM",      text: "St. Gallen + Appenzeller Schaukäserei (cheese show dairy, 30 min extra).", optional: true },
       { time: "PM",      text: "Berggasthaus Aescher + Wildkirchli (cableway from Wasserauen).", optional: true },
-      { time: "Late PM", text: "Vaduz: Liechtenstein Center (passport stamp, closes 5pm), Postal Museum, Castle exterior." },
+      { time: "Late PM", text: "Vaduz: Liechtenstein Center (passport stamp + Snack Box pickup, closes 5pm), Postal Museum, Kunstmuseum, Castle exterior." },
+      { time: "Late PM", text: "Winery of the Prince (closes 6pm).", optional: true },
       { time: "18:30",   text: "Dinner: Brasserie Burg (Simply Thai backup).", anchor: true },
       { time: "Eve",     text: "Alte Rheinbrücke — walk across the border." },
     ],
@@ -284,14 +294,17 @@ const days = [
       { time: "Stop", text: `[Brienz hot tub boat](${URL_HOTTUBBOAT}).`, optional: true },
       { time: "Stop", text: "Ballenberg Open-Air Museum — Blacknose Sheep in June.", optional: true },
       { time: "Stop", text: "Gelmerbahn + 4.5 km lake hike + Handeckfallbrücke.", optional: true },
+      { time: "19:00", text: "Dinner: Barry's (RSVP'd; Basecamp as walk-in backup).", anchor: true },
       { time: "Eve",  text: "Coop near AirBnB — breakfast x4, snacks, maybe Wed lunch + dinners." },
     ],
     reservations: [
-      { name: "Grindelwald AirBnB", time: "Check-in" },
+      { name: "Barry's (Basecamp backup)", time: "19:00" },
+      { name: "Grindelwald AirBnB",        time: "Check-in" },
     ],
     notes: [
       "Swiss motorway vignette REQUIRED (~CHF 40) — separate from Austrian one. Buy at border.",
       "Stock the kitchen — 4 mornings of breakfast saves time and money.",
+      "Confirm the Grindelwald apartment check-in time.",
     ],
   },
   {
@@ -428,6 +441,7 @@ const days = [
     schedule: [
       { time: "AM",     text: "Kambly Experience Shop (cracker/biscuit) — just north of Interlaken.", optional: true },
       { time: "Midday", text: "Drive through Lucerne — walk Chapel Bridge." },
+      { time: "Midday", text: "Lucerne extras: Amorino Gelato (only branch on route) + Lindt factory outlet near Chapel Bridge.", optional: true },
       { time: "PM",     text: "Arrive Zürich. Drop car." },
       { time: "PM",     text: "Left Hand Promenade on the Limmat — local music + buskers." },
       { time: "PM",     text: "Beyer Clock & Watch Museum.", optional: true },
@@ -469,7 +483,8 @@ const days = [
       { name: "Flight", time: "13:20 (AA OIWHWD)" },
     ],
     notes: [
-      "Confirm British Airways vegetarian meal ordering for home leg.",
+      "Confirm American Airlines vegetarian meal ordering for the home leg (conf. OIWHWD).",
+      "AA carry-on limit 22×14×9 in — CVG flight is a 737-800 (3-3 seating).",
       "International check-in: allow 2 hrs minimum at ZRH.",
     ],
   },
