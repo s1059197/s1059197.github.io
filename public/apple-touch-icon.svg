@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Palette pulled from TripDashboard.jsx -->
+  <!-- paper #F0E6D2 · paper-map #EFE3C7 · ink #1F1812 · ink-muted #6B5847 · ink-faint #B8A988 · accent #C84A2C · accent-soft #E8A765 -->
+
+  <defs>
+    <!-- Paper texture: tiny ink-faint dots, like the day map background -->
+    <pattern id="paper" patternUnits="userSpaceOnUse" width="24" height="24">
+      <rect width="24" height="24" fill="#F0E6D2"/>
+      <circle cx="5"  cy="9"  r="1.1" fill="#B8A988" opacity="0.55"/>
+      <circle cx="17" cy="18" r="0.9" fill="#B8A988" opacity="0.45"/>
+      <circle cx="12" cy="3"  r="0.7" fill="#B8A988" opacity="0.55"/>
+      <circle cx="21" cy="7"  r="0.55" fill="#B8A988" opacity="0.40"/>
+    </pattern>
+
+    <!-- Hand-drawn roughness for the globe rim + route, echoing the map filter -->
+    <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="2" seed="4"/>
+      <feDisplacementMap in="SourceGraphic" scale="3"/>
+    </filter>
+    <filter id="roughHeavy" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.45" numOctaves="2" seed="9"/>
+      <feDisplacementMap in="SourceGraphic" scale="6"/>
+    </filter>
+
+    <!-- Clip to globe disk so latitude/longitude/continent only show on the sphere -->
+    <clipPath id="globe">
+      <circle cx="512" cy="540" r="332"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background: full-bleed paper (iOS auto-rounds the corners) -->
+  <rect width="1024" height="1024" fill="url(#paper)"/>
+
+  <!-- Subtle sunburst in the upper-right, like the poster banner -->
+  <g transform="translate(900,140)" opacity="0.20">
+    <g>
+      <!-- 16 rays -->
+      <g fill="#C84A2C">
+        <path d="M0,0 L8,-180 L-8,-180 Z"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(22.5)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(45)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(67.5)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(90)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(112.5)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(135)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(157.5)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(180)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(202.5)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(225)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(247.5)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(270)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(292.5)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(315)"/>
+        <path d="M0,0 L8,-180 L-8,-180 Z" transform="rotate(337.5)"/>
+      </g>
+      <circle r="46" fill="#C84A2C"/>
+    </g>
+  </g>
+
+  <!-- Decorative double frame echoes the day-map and poster borders -->
+  <rect x="56" y="56" width="912" height="912" fill="none" stroke="#1F1812" stroke-width="6"/>
+  <rect x="80" y="80" width="864" height="864" fill="none" stroke="#1F1812" stroke-width="2"/>
+
+  <!-- Compass mark above the globe -->
+  <g transform="translate(512,148)">
+    <line x1="0" y1="-30" x2="0" y2="30" stroke="#1F1812" stroke-width="3"/>
+    <path d="M0,-32 L9,-12 L0,-18 L-9,-12 Z" fill="#C84A2C"/>
+    <path d="M0,32 L9,12 L0,18 L-9,12 Z" fill="#1F1812"/>
+    <text x="0" y="-44" text-anchor="middle" font-family="'Bebas Neue', 'Trebuchet MS', sans-serif"
+          font-size="34" fill="#1F1812" letter-spacing="6">N</text>
+  </g>
+
+  <!-- Globe disk: warm paper-map color with the hand-drawn rim -->
+  <circle cx="512" cy="540" r="332" fill="#EFE3C7"/>
+  <circle cx="512" cy="540" r="332" fill="none" stroke="#1F1812" stroke-width="8" filter="url(#rough)"/>
+
+  <!-- Inner shading hint for a subtle sphere feeling -->
+  <circle cx="512" cy="540" r="316" fill="none" stroke="#6B5847" stroke-width="1.5" opacity="0.35"/>
+
+  <!-- Latitude / longitude graticule, clipped to the disk -->
+  <g clip-path="url(#globe)" fill="none" stroke="#6B5847" stroke-width="3" opacity="0.75">
+    <!-- Latitudes (ellipses) -->
+    <ellipse cx="512" cy="540" rx="332" ry="68"/>
+    <ellipse cx="512" cy="540" rx="332" ry="170"/>
+    <ellipse cx="512" cy="540" rx="332" ry="260"/>
+    <!-- Equator slightly stronger -->
+    <line x1="180" y1="540" x2="844" y2="540" stroke="#1F1812" stroke-width="3.5" opacity="0.7"/>
+    <!-- Longitudes (ellipses with vertical major axis) -->
+    <ellipse cx="512" cy="540" rx="60" ry="332"/>
+    <ellipse cx="512" cy="540" rx="150" ry="332"/>
+    <ellipse cx="512" cy="540" rx="240" ry="332"/>
+    <!-- Prime meridian slightly stronger -->
+    <line x1="512" y1="208" x2="512" y2="872" stroke="#1F1812" stroke-width="3.5" opacity="0.7"/>
+  </g>
+
+  <!-- Abstract alpine-Europe landmass on the visible face, drawn rough -->
+  <g clip-path="url(#globe)">
+    <path d="M 360 430
+             C 380 410, 430 405, 470 415
+             C 510 420, 545 412, 580 425
+             C 620 438, 650 432, 672 452
+             C 692 472, 686 504, 668 524
+             C 660 548, 666 576, 648 596
+             C 626 622, 596 624, 564 612
+             C 540 626, 506 632, 478 622
+             C 448 632, 416 624, 392 604
+             C 372 588, 366 558, 376 530
+             C 360 506, 348 478, 358 452 Z"
+          fill="#1F1812"
+          filter="url(#rough)"
+          opacity="0.92"/>
+    <!-- A couple of tiny island/mountain ticks for texture -->
+    <circle cx="690" cy="600" r="6" fill="#1F1812" opacity="0.85"/>
+    <circle cx="340" cy="600" r="4.5" fill="#1F1812" opacity="0.7"/>
+    <circle cx="610" cy="660" r="5" fill="#1F1812" opacity="0.7"/>
+  </g>
+
+  <!-- Dashed accent-orange route arc across the visible hemisphere, like the day maps -->
+  <g clip-path="url(#globe)">
+    <path d="M 280 600 Q 480 380, 760 500"
+          fill="none" stroke="#C84A2C" stroke-width="11"
+          stroke-dasharray="22 14" stroke-linecap="round"
+          filter="url(#roughHeavy)"/>
+    <!-- Start + end markers -->
+    <g>
+      <circle cx="280" cy="600" r="20" fill="#C84A2C" opacity="0.18"/>
+      <circle cx="280" cy="600" r="11" fill="#C84A2C" stroke="#F0E6D2" stroke-width="4"/>
+    </g>
+    <g>
+      <circle cx="760" cy="500" r="20" fill="#C84A2C" opacity="0.18"/>
+      <circle cx="760" cy="500" r="11" fill="#C84A2C" stroke="#F0E6D2" stroke-width="4"/>
+    </g>
+  </g>
+
+  <!-- Title strip at the bottom, mimicking the map cartouche -->
+  <g transform="translate(512,938)">
+    <rect x="-260" y="-44" width="520" height="76" fill="#F0E6D2" stroke="#1F1812" stroke-width="3"/>
+    <rect x="-252" y="-36" width="504" height="60" fill="none" stroke="#1F1812" stroke-width="1"/>
+    <text x="0" y="-7" text-anchor="middle"
+          font-family="'JetBrains Mono', 'Courier New', monospace"
+          font-size="20" fill="#6B5847" letter-spacing="9">◆  MMXXVI  ◆</text>
+    <text x="0" y="20" text-anchor="middle"
+          font-family="'Bebas Neue', 'Trebuchet MS', sans-serif"
+          font-size="30" fill="#1F1812" letter-spacing="6">THE GRAND TOUR</text>
+  </g>
+</svg>
